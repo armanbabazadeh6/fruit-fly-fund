@@ -450,6 +450,15 @@ def cmd_fitreadout(args):
     description = model.describe()
     description["fitted_on"] = used
     description["usable_bars"] = len(vectors)
+
+    # The margin decides how often the readout acts, so it should come from the score
+    # distribution rather than from a guess. Reported here; chosen when the run is launched.
+    import numpy as np
+
+    scores = np.abs(np.asarray([model.score(vector) for vector in vectors], dtype=np.float64))
+    percentiles = {f"p{value}": round(float(np.percentile(scores, value)), 4) for value in (50, 60, 75, 90)}
+    description["absolute_score_percentiles"] = percentiles
+    description["suggested_margin"] = percentiles["p60"]
     print(json.dumps(description, indent=2))
     return 0
 

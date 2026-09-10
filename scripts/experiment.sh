@@ -25,12 +25,15 @@ else PY="python"; fi
 BARS="${1:-48}"
 TRAIN_SEASONS="${2:-2}"
 PRESET="${3:-scalper}"
-BRAINS="runs/brains/train"
+BRAINS="${BRAINS:-runs/brains/train}"
 MODEL="models/readout.json"
 # Seasons are windows stepping back one at a time; training takes the newest ones.
 EXAM_OFFSET=$(( BARS * TRAIN_SEASONS ))
 
-echo "== train (${TRAIN_SEASONS} seasons, preset ${PRESET})"
+echo "== train (${TRAIN_SEASONS} seasons, preset ${PRESET}) -> ${BRAINS}"
+# `save_brains` refuses to overwrite an existing checkpoint, so a second training run needs a
+# fresh directory (or BRAINS=... pointing at one). That rule exists so a campaign cannot
+# silently replace the brains an earlier result was produced from.
 "$PY" -m flyvsly run --engine neural --market coinbase --bars "$BARS" --repeats "$TRAIN_SEASONS" \
   --preset "$PRESET" --reinforcement pnl --window-offset 0 \
   --label train --save-brains "$BRAINS" --out runs

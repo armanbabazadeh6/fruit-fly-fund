@@ -473,16 +473,21 @@ class Arena:
             "summary": summary,
             "disclaimers": DISCLAIMERS,
         }
-        if config.save_brains:
+        write_recording(out / "recording.json", recording)
+
+        # Checkpoint only after the recording is on disk, and only for the last season of a
+        # multi-season run: `save_brains` refuses to overwrite, because a campaign must not
+        # silently replace an earlier training run, and what "trained" means here is the
+        # brain as it stands after the final season.
+        if config.save_brains and repeat == config.repeats - 1:
             from .starting import save_brains
 
-            recording["run"]["brains_saved"] = save_brains(
-                Path(config.save_brains),
-                {arm.id: arm.backend for arm in arms},
+            saved = save_brains(
+                Path(config.save_brains), {arm.id: arm.backend for arm in arms}
             )
-            self.emit("brains_saved", **recording["run"]["brains_saved"])
-
-        write_recording(out / "recording.json", recording)
+            recording["run"]["brains_saved"] = saved
+            write_recording(out / "recording.json", recording)
+            self.emit("brains_saved", **saved)
         write_recording(
             out / "manifest.json",
             {
