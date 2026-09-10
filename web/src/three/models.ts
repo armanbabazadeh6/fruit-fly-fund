@@ -266,8 +266,10 @@ export function buildLamp(accent: string) {
 /** The market board on the wall: the shared market and both equity curves. */
 export function buildBoard(width = 1024, height = 256) {
   const group = new THREE.Group()
+  // Kept deliberately shallow: the stage is a wide letterbox, so a tall board would be
+  // clipped at the top of the frame.
   const frame = new THREE.Mesh(
-    new THREE.BoxGeometry(8.6, 2.15, 0.12),
+    new THREE.BoxGeometry(8.6, 1.62, 0.12),
     standard(0x141a22, { roughness: 0.7, metalness: 0.3 }),
   )
   group.add(frame)
@@ -279,7 +281,7 @@ export function buildBoard(width = 1024, height = 256) {
   texture.colorSpace = THREE.SRGBColorSpace
 
   const screen = new THREE.Mesh(
-    new THREE.PlaneGeometry(8.32, 1.9),
+    new THREE.PlaneGeometry(8.34, 1.42),
     new THREE.MeshBasicMaterial({ map: texture, toneMapped: false }),
   )
   screen.position.z = 0.07

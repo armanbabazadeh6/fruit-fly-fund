@@ -298,6 +298,11 @@ function drawTerminal(terminal: TerminalParts, arm: FloorArmState, state: FloorS
   terminal.texture.needsUpdate = true
 }
 
+/** Where the camera looks. The desk surface is world y = 0 and the fly sits on it. */
+const LOOK_AT_Y = 1.02
+/** Desk feet are at this local height, so this is where the room's floor belongs. */
+const DESK_FEET_Y = -1.55
+
 export interface FloorOptions {
   /** Horizontal distance between the two stations. */
   spread?: number
@@ -318,7 +323,7 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   const cameraDistance = options.distance ?? 8.6
   const cameraHeight = options.height ?? 3.4
   const fov = options.fov ?? 34
-  const flyScale = options.flyScale ?? 0.72
+  const flyScale = options.flyScale ?? 0.82
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
   renderer.shadowMap.enabled = true
@@ -333,7 +338,8 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
 
   const scene = new THREE.Scene()
   scene.background = new THREE.Color(0x070b11)
-  scene.fog = new THREE.Fog(0x070b11, 13, 30)
+  // Far enough that the wall board (which sits behind the desks) is not washed out.
+  scene.fog = new THREE.Fog(0x070b11, 17, 42)
 
   const pmrem = new THREE.PMREMGenerator(renderer)
   const environment = pmrem.fromScene(new RoomEnvironment(), 0.05)
@@ -342,7 +348,7 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
 
   const camera = new THREE.PerspectiveCamera(fov, 2, 0.1, 100)
   camera.position.set(0, cameraHeight, cameraDistance)
-  camera.lookAt(0, 0.75, 0)
+  camera.lookAt(0, LOOK_AT_Y, 0)
 
   scene.add(new THREE.HemisphereLight(0x9dc0ff, 0x0a0f16, 0.55))
 
@@ -355,7 +361,7 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   key.shadow.camera.left = -9
   key.shadow.camera.right = 9
   key.shadow.camera.top = 8
-  key.shadow.camera.bottom = -4
+  key.shadow.camera.bottom = -7
   key.shadow.bias = -0.0016
   key.shadow.normalBias = 0.02
   scene.add(key)
@@ -368,19 +374,24 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     new THREE.PlaneGeometry(60, 26),
     new THREE.MeshStandardMaterial({ color: 0x0a0f16, roughness: 1, metalness: 0 }),
   )
-  backdrop.position.set(0, 6, -9)
+  backdrop.position.set(0, 5, -9)
   scene.add(backdrop)
 
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(60, 34),
     new THREE.MeshStandardMaterial({ map: gridTexture(), roughness: 0.9, metalness: 0.1 }),
   )
+  // The floor sits at the height of the desk feet. It used to sit at y = 0 while the
+  // stations were pushed 1.02 below it, which buried both flies under an opaque plane.
   floor.rotation.x = -Math.PI / 2
+  floor.position.y = DESK_FEET_Y
   floor.receiveShadow = true
+  floor.name = 'floor'
   scene.add(floor)
 
   const board = buildBoard()
-  board.group.position.set(0, 3.15, -5.4)
+  board.group.position.set(0, 2.58, -4.6)
+  board.group.name = 'board'
   scene.add(board.group)
 
   const stations: Station[] = []
@@ -388,17 +399,20 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
 
   for (const side of [-1, 1]) {
     const station = new THREE.Group()
-    station.position.set(side * spread, -1.02, 0)
+    // Desk top at world y = 0, desk feet on the floor below it.
+    station.position.set(side * spread, 0, 0)
     station.rotation.y = -side * 0.4
     scene.add(station)
 
     const desk = buildDesk()
+    desk.name = 'desk'
     desk.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) child.receiveShadow = true
     })
     station.add(desk)
 
     const terminal = buildTerminal()
+    terminal.group.name = 'terminal'
     terminal.group.position.set(side * 0.5, 1.02, -0.62)
     terminal.group.rotation.y = -side * 0.26
     terminal.group.traverse((child) => {
@@ -407,9 +421,13 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     station.add(terminal.group)
 
     const fly = buildFly(accents[side < 0 ? 0 : 1])
+    fly.root.name = 'fly'
     fly.root.scale.setScalar(flyScale)
-    fly.root.position.set(-side * 0.35, 0.07, 0.42)
-    fly.root.rotation.y = side * 0.55
+    // Feet on the desk surface (the desk top plane is at local y = 0.105).
+    fly.root.position.set(-side * 0.35, 0.12, 0.42)
+    // Facing inward: the two flies are rivals sharing a floor, and turning them away from
+    // each other read as two unrelated desks.
+    fly.root.rotation.y = -side * 0.62
     fly.body.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         child.castShadow = true
@@ -419,7 +437,8 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     station.add(fly.root)
 
     const lamp = buildLamp(accents[side < 0 ? 0 : 1])
-    lamp.position.set(side * 1.55, 0.07, -0.3)
+    lamp.name = 'lamp'
+    lamp.position.set(side * 1.12, 0.07, -0.3)
     lamp.rotation.y = -side * 0.6
     lamp.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) child.castShadow = true
@@ -427,6 +446,7 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     station.add(lamp)
 
     const cup = buildCup()
+    cup.name = 'cup'
     cup.position.set(-side * 1.5, 0.07, 0.4)
     station.add(cup)
 
@@ -536,7 +556,7 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
       const fit = Math.max(0.86, Math.min(1.34, 1400 / width))
       camera.position.x += (pointer.x * 0.55 - camera.position.x) * 0.045
       camera.position.y += (cameraHeight * fit + pointer.y * -0.28 - camera.position.y) * 0.045
-      camera.lookAt(0, 0.75, 0)
+      camera.lookAt(0, LOOK_AT_Y, 0)
     }
     renderer.render(scene, camera)
   }
@@ -596,10 +616,37 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     }
   }
 
+  /**
+   * Is this object actually visible from the camera, or is something in front of it?
+   *
+   * Projecting a position into the frame only proves it is inside the frustum: a mesh
+   * behind an opaque floor still projects perfectly. This casts a ray through the object's
+   * centre and reports which named object is hit first, which is the check that catches an
+   * occluded fly.
+   */
+  const raycaster = new THREE.Raycaster()
+  const visibilityOf = (object: THREE.Object3D) => {
+    const box = new THREE.Box3().setFromObject(object)
+    const centre = box.getCenter(new THREE.Vector3())
+    const ndc = centre.clone().project(camera)
+    raycaster.setFromCamera(new THREE.Vector2(ndc.x, ndc.y), camera)
+    const hit = raycaster
+      .intersectObjects(scene.children, true)
+      .find((entry) => entry.object.visible)
+    let node: THREE.Object3D | null = hit?.object ?? null
+    while (node && !node.name && node.parent) node = node.parent
+    return {
+      hit: node?.name || 'unnamed',
+      distance: hit ? Number(hit.distance.toFixed(2)) : null,
+      centre: [Number(ndc.x.toFixed(3)), Number(ndc.y.toFixed(3))],
+    }
+  }
+
   const publishDiagnostics = () => {
     container.dataset.floor = JSON.stringify({
       render: { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles },
       camera: camera.position.toArray().map((value) => Number(value.toFixed(2))),
+      board: { ...ndcBounds(board.group), visible: visibilityOf(board.screen) },
       stations: stations.map((station) => {
         const project = (object: THREE.Object3D) => {
           const vector = new THREE.Vector3()
@@ -617,6 +664,10 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
           deskNdc: ndcBounds(station.desk),
           lampNdc: ndcBounds(station.lamp),
           cupNdc: ndcBounds(station.cup),
+          visible: {
+            fly: visibilityOf(station.fly.root),
+            screen: visibilityOf(station.terminal.screen),
+          },
         }
       }),
     })

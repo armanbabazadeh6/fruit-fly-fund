@@ -69,7 +69,9 @@
 
 .floor-stage {
   position: relative;
-  height: 540px;
+  /* Tall enough that the desks, the flies, their terminals and the wall board all fit
+     without clipping at the top of the frame. */
+  height: 640px;
   background: #070b11;
 }
 
@@ -162,7 +164,7 @@
     grid-template-columns: 1fr;
   }
   .floor-stage {
-    height: 420px;
+    height: 460px;
   }
   .floor-return {
     margin-left: 0;

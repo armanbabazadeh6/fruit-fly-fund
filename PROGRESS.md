@@ -100,12 +100,25 @@ confirmed. The scene is 104 draw calls and ~11k triangles; it animates wings, po
 lamps, steam and pointer parallax, and stops entirely under `prefers-reduced-motion`.
 
 Framing was chosen from measured NDC footprints, since a headless check cannot look at the
-picture: with `spread=3.5, distance=8.6, height=3.4, flyScale=0.72` the flies sit at
-|x| ≈ 0.41, their screens at |x| ≈ 0.56, lamps and mugs stay inside |x| < 0.9, and the desk
-fronts bleed off the bottom edge on purpose. The rendered stage measures mean luminance 59
-with 20k distinct colours — lit, contrasted, and not crushed to black.
+picture: with `spread=3.5, distance=8.6, height=3.4, flyScale=0.82` the flies are 0.53 NDC
+wide at |x| ≈ 0.55, their screens sit above them at |x| ≈ 0.67, lamps and mugs stay inside
+|x| < 1, and the desk fronts bleed off the bottom edge on purpose. The stage renders at mean
+luminance 53 with 32k distinct colours — lit, contrasted, and not crushed to black.
 
-Three defects surfaced while verifying it, all fixed:
+**The occlusion bug, and the lesson.** The first version passed every check I had and was
+still wrong on screen: the stations were positioned at `y = -1.02` while the floor plane sat
+at `y = 0`, so an opaque grid plane covered both desks and both flies. Projecting an object
+into the frustum proves nothing about whether it can be seen — a mesh under a floor projects
+perfectly. `diagnostics()` now casts a ray through each fly's and each screen's centre and
+reports which *named* object is hit first, so visibility is measured rather than assumed. If
+you change the scene, check `visible.fly.hit === 'fly'` in the harness, not just the NDC
+bounds.
+
+Four defects surfaced while verifying it, all fixed:
+
+0. The flies and desks were buried under the floor plane (above), and the wall board's top
+   edge was clipped by the letterbox stage — the panel is now 640px tall and the board is
+   shallow enough to fit entirely.
 
 1. The diagnostics publish compared `performance.now()` against a zero baseline, so the
    first (and for a paused recording, only) update never published.
