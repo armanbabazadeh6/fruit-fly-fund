@@ -354,7 +354,7 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     fly.root.scale.setScalar(flyScale)
     // Feet on the desk surface (the desk top plane is at local y = 0.105), set back from
     // the keyboard so the forelegs can reach the keys.
-    fly.root.position.set(-side * 0.3, 0.12, 0.34)
+    fly.root.position.set(-side * 0.3, 0.12, 0.1)
     // Facing inward: the two flies are rivals sharing a floor, and turning them away from
     // each other read as two unrelated desks.
     fly.root.rotation.y = -side * 0.62
@@ -377,7 +377,9 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
 
     const keyboard = buildKeyboard()
     keyboard.group.name = 'keyboard'
-    keyboard.group.position.set(-side * 0.06, 0.09, 0.92)
+    // Depth chosen so the whole keyboard stays on the desk top (which spans z -0.95..0.95)
+    // while the forelegs, whose reach is fixed by the shoulder height, land mid-deck.
+    keyboard.group.position.set(-side * 0.06, 0.09, 0.65)
     keyboard.group.rotation.y = -side * 0.3
     keyboard.group.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
