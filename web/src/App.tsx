@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Commentary } from './components/Commentary'
 import { DecisionExplainer } from './components/DecisionExplainer'
 import { EquityChart } from './components/EquityChart'
+import { ExamPanel } from './components/ExamPanel'
 import { PriceChart } from './components/PriceChart'
 import { Provenance } from './components/Provenance'
+import { ReadoutPanel } from './components/ReadoutPanel'
 import { Scoreboard } from './components/Scoreboard'
 import { SeasonLibrary } from './components/SeasonLibrary'
 import { TelemetryPanel } from './components/TelemetryPanel'
@@ -434,6 +436,23 @@ export default function App() {
           barIndex={clampedIndex}
           provisional={Boolean(live && !live.finished)}
         />
+
+        {/* What this run is, and what its comparison can support. */}
+        <ExamPanel
+          kind={shown.run.kind ?? 'competition'}
+          arms={arms}
+          summaries={summaries}
+          starting={Object.fromEntries(
+            arms.map((arm) => [
+              arm.id,
+              arm.starting_weights ?? { kind: 'baseline', label: 'baseline' },
+            ]),
+          )}
+          comparison={shown.summary.comparison}
+          startingCapital={initialCapital}
+        />
+
+        <ReadoutPanel readout={shown.run.readout ?? null} arms={arms} />
 
         <section className="charts-row">
           <EquityChart

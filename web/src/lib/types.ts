@@ -47,6 +47,13 @@ export interface NeuralSignal {
   spike_sha256: string
   input_sha256: string
   memory: MemoryTelemetry
+  /** Spike counts of the recorded population, in the order run.population.ids describes. */
+  population?: number[]
+  /** Present only when a fitted readout decided this bar. */
+  readout_score?: number
+  readout_margin?: number
+  /** The fixed rule's answer on the same spikes, kept as the audit trail. */
+  decoder_side?: Side
 }
 
 export interface ProceduralSignal {
@@ -169,6 +176,38 @@ export interface BackendDescription {
   parameters?: Record<string, number>
 }
 
+/** Where an arm's brain started: reconstructed baseline, or restored from a checkpoint. */
+export interface StartingWeights {
+  kind: 'baseline' | 'trained' | 'reset'
+  label: string
+  file?: string | null
+  sha256?: string | null
+}
+
+/** The cells the recorded population vector carries, recorded once per run. */
+export interface PopulationDescription {
+  schema: string
+  size: number
+  sample: number
+  truncated: boolean
+  groups: Record<string, number>
+  ids: string[]
+  types: string[]
+  selection: string
+}
+
+/** A fitted readout's own metrics, recorded with the run that used it. */
+export interface ReadoutDescription {
+  schema: string
+  horizon: number
+  features: number
+  trained_on: string
+  train: { bars: number; accuracy: number; base_rate: number }
+  holdout: { bars: number; accuracy: number; base_rate: number }
+  top_features: { index: number; weight: number; type?: string; id?: string }[]
+  notes?: string
+}
+
 export interface ArmMeta {
   id: string
   name: string
@@ -182,6 +221,8 @@ export interface ArmMeta {
   starting_capital: string
   settings: Record<string, unknown>
   settings_signature: string
+  starting_weights?: StartingWeights | null
+  starting_report?: Record<string, unknown> | null
   backend: BackendDescription
 }
 
@@ -243,6 +284,12 @@ export interface Recording {
     id: string
     created: number
     label: string
+    /** What the two flies differ in: live learning, or the brain they carried in. */
+    kind?: 'competition' | 'exam' | 'reset'
+    reinforcement_mode?: string
+    rule_preset?: string
+    population?: PopulationDescription | null
+    readout?: ReadoutDescription | null
     engine: 'neural' | 'procedural'
     repeat: number
     bars: number
