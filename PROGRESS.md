@@ -3,6 +3,37 @@
 Running log so the desktop session can pick up exactly where the laptop stopped.
 Newest entries at the top.
 
+## RESUME HERE
+
+Paused with a clean tree at `9ffce9c`. The two remaining exam runs (`exam-reset`,
+`exam-readout`) were still going when we stopped; if they finished, `runs/` has them and
+`results/report.md` needs committing.
+
+**Where the three requested features stand**
+
+1. **Exam (held-out)** — built, tested, verified on real data. A training run learned on the
+   newest season and checkpointed both brains; an exam run then applied `gordon`'s trained
+   weights on an unseen window and recorded the checkpoint digest with
+   `differing_fields: ["starting_weights"]`. First reading, 12 bars: trained −0.137% against
+   fresh baseline −0.128%, a paired difference of 0.009% — a null, on a season far too short to
+   mean anything.
+2. **Reward timing** — `--reinforcement pnl|decoy|shuffled|none` all work. `pnl` is measured
+   over three seasons with the busy preset: memory-on −1.464%, memory-off −1.180%, paired
+   −0.284%, 1 win in 3, both behind buy & hold. `decoy`, `shuffled` and `none` have not been
+   run to completion yet.
+3. **A readout fitted from the fly** — built, tested, and fitted once for real. It recorded a
+   memorised fit: training accuracy 1.0 on 34 bars with 256 features, holdout 0.583 against a
+   base rate of 0.583 on 12 bars. `fitreadout` warns about exactly this. A fit worth reading
+   needs many more seasons.
+
+**Next, in order**
+
+1. Let the machine cool, then re-run the exams at a length worth reading:
+   `BRAINS=runs/brains/train2 scripts/experiment.sh 48 4 scalper` on the desktop.
+2. Run the remaining reinforcement modes (`decoy`, `shuffled`, `none`) on the same seasons.
+3. Refit the readout from those seasons and re-run the readout exam.
+4. Commit `results/report.md` and update the README's result section with the new table.
+
 ## Status: vertical slice complete, first three-season result recorded
 
 The two-arm competition runs on the real MaleCNS v1.0 engine on the M2 Air, the browser
