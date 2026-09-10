@@ -65,7 +65,8 @@ export default function App() {
   })
   const [index, setIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
-  const [speed, setSpeed] = useState(4)
+  const introPlayed = useRef(false)
+  const [speed, setSpeed] = useState(3)
   const [connected, setConnected] = useState(false)
   const [running, setRunning] = useState(false)
   const [starting, setStarting] = useState(false)
@@ -83,7 +84,16 @@ export default function App() {
       if (liveActive) return
       setLive(null)
       liveRef.current = null
-      setIndex(Math.max(0, (loaded.summary.bars || loaded.observations.length) - 1))
+      const total = loaded.summary.bars || loaded.observations.length
+      if (!introPlayed.current) {
+        // One-shot intro on first open: replay the season from the start so the floor is
+        // alive when the page appears, then settle on the final bar.
+        introPlayed.current = true
+        setIndex(0)
+        setPlaying(true)
+      } else {
+        setIndex(Math.max(0, total - 1))
+      }
       setSource(sourceFor(loaded, 'recorded'))
     } catch (failure) {
       setError(`Could not load ${id}: ${(failure as Error).message}`)
@@ -377,6 +387,18 @@ export default function App() {
           </div>
         </div>
 
+        <TradingFloor
+          arms={arms}
+          summaries={summaries}
+          observations={observations}
+          seasonBars={shown.season.bars}
+          index={clampedIndex}
+          engine={shown.run.engine}
+          live={Boolean(live) && !live?.finished}
+          initialCapital={initialCapital}
+          product={observations[0]?.product ?? 'BTC-USDC'}
+        />
+
         <Scoreboard
           arms={arms}
           summaries={summaries}
@@ -418,18 +440,6 @@ export default function App() {
           onSelect={setIndex}
           product={observations[0]?.product ?? 'BTC-USDC'}
           visibleBars={clampedIndex + 1}
-        />
-
-        <TradingFloor
-          arms={arms}
-          summaries={summaries}
-          observations={observations}
-          seasonBars={shown.season.bars}
-          index={clampedIndex}
-          engine={shown.run.engine}
-          live={Boolean(live) && !live?.finished}
-          initialCapital={initialCapital}
-          product={observations[0]?.product ?? 'BTC-USDC'}
         />
 
         <section className="explain-row">

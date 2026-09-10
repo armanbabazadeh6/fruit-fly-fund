@@ -94,8 +94,36 @@ export function TradingFloor({
       const entry = observation?.arms?.[arm.id] ?? null
       const { signalLine, memoryLine, reason } = deskLines(arm, observation)
       const curve = summary?.curve ?? []
+      const trail = observations.slice(0, index + 1)
+      const events = trail
+        .filter((entry) => (entry.arms?.[arm.id]?.execution.status ?? 'HOLD') !== 'HOLD')
+        .slice(-6)
+        .reverse()
+        .map((entry) => {
+          const armEntry = entry.arms[arm.id]
+          const fill = armEntry.execution.fill
+          const status = armEntry.execution.status
+          return {
+            side: armEntry.decision.side,
+            label: fill
+              ? `${armEntry.decision.side} ${fill.base} @ ${fill.price}`
+              : `${armEntry.decision.side} ${status}`,
+          }
+        })
+      const lastFillEntry = [...trail]
+        .reverse()
+        .find((entry) => entry.arms?.[arm.id]?.execution.status === 'FILLED' && entry.arms[arm.id].execution.fill)
+      const lastFill = lastFillEntry
+        ? {
+            i: lastFillEntry.i,
+            side: lastFillEntry.arms[arm.id].decision.side,
+            base: lastFillEntry.arms[arm.id].execution.fill!.base,
+            price: lastFillEntry.arms[arm.id].execution.fill!.price,
+          }
+        : null
       return {
         id: arm.id,
+
         name: arm.name,
         roleLabel: arm.role_label,
         accent: position === 0 ? '#ffb454' : '#5ec8ff',
@@ -114,6 +142,8 @@ export function TradingFloor({
         memoryLine,
         neural: entry?.signal ? isNeural(entry.signal) : engine === 'neural',
         halted: Boolean(entry?.portfolio.halted),
+        trades: events,
+        lastFill,
       }
     })
     return {

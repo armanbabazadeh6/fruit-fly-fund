@@ -46,6 +46,10 @@ export interface FloorArmState {
   memoryLine: string
   neural: boolean
   halted: boolean
+  /** Most recent fills at or before the current bar, newest first, for the desk tape. */
+  trades: { side: string; label: string }[]
+  /** The last actual fill, which is what the screen reacts to. */
+  lastFill: { i: number; side: string; base: string; price: string } | null
 }
 
 export interface FloorState {
@@ -73,6 +77,12 @@ interface Station {
   flapPhase: number
   mood: FlyMood
   pulse: number
+  /** Trade reaction: the id of the last event seen and when its flash started. */
+  eventId: string
+  flashStart: number
+  lastFlash: number
+  arm: FloorArmState | null
+  state: FloorState | null
 }
 
 export interface FloorHandle {
@@ -109,7 +119,13 @@ function gridTexture(): THREE.CanvasTexture {
   return texture
 }
 
-function drawTerminal(terminal: TerminalParts, arm: FloorArmState, state: FloorState, time: number) {
+function drawTerminal(
+  terminal: TerminalParts,
+  arm: FloorArmState,
+  state: FloorState,
+  time: number,
+  flash: number,
+) {
   const context = terminal.canvas.getContext('2d')
   if (!context) return
   const { width, height } = terminal.canvas
@@ -117,7 +133,10 @@ function drawTerminal(terminal: TerminalParts, arm: FloorArmState, state: FloorS
   const amber = '#ffb454'
   const dim = '#6b7f94'
   const ink = '#dbe7f3'
+  const green = '#5ad9a4'
+  const red = '#ff6b81'
   const mono = '13px ui-monospace, SFMono-Regular, Menlo, monospace'
+  const trade = arm.lastFill
 
   context.fillStyle = '#05080c'
   context.fillRect(0, 0, width, height)
@@ -127,28 +146,45 @@ function drawTerminal(terminal: TerminalParts, arm: FloorArmState, state: FloorS
   context.fillRect(0, 0, width, 34)
   context.fillStyle = accent
   context.fillRect(0, 0, 4, 34)
-  context.font = 'bold 16px ui-monospace, SFMono-Regular, Menlo, monospace'
+  context.font = 'bold 17px ui-monospace, SFMono-Regular, Menlo, monospace'
   context.fillStyle = accent
   context.fillText(arm.name.toUpperCase(), 16, 23)
   context.font = '12px ui-monospace, SFMono-Regular, Menlo, monospace'
   context.fillStyle = dim
-  context.fillText(arm.roleLabel.toUpperCase(), 240, 23)
-  context.fillStyle = state.live ? '#5ad9a4' : dim
-  context.fillText(state.live ? 'LIVE' : 'RECORDED', width - 92, 23)
+  context.fillText(arm.roleLabel.toUpperCase(), 262, 23)
+  context.fillStyle = state.live ? green : dim
+  context.fillText(state.live ? 'LIVE' : 'RECORDED', width - 100, 23)
 
-  // Equity + return, the two numbers a desk always has in view
-  context.font = 'bold 30px ui-monospace, SFMono-Regular, Menlo, monospace'
+  // The band that changes when the fly trades: green fill, red veto, amber wait.
+  const bandColour = arm.exec === 'FILLED' ? green : arm.exec === 'VETO' || arm.exec === 'BLOCKED' ? red : '#3d4855'
+  context.fillStyle = bandColour
+  context.globalAlpha = 0.9
+  context.fillRect(0, 34, width, 42)
+  context.globalAlpha = 1
+  context.font = 'bold 20px ui-monospace, SFMono-Regular, Menlo, monospace'
+  context.fillStyle = '#05080c'
+  const headline = trade
+    ? `${trade.side} FILLED · ${trade.base} @ ${trade.price}`
+    : arm.exec === 'VETO'
+      ? `${arm.side} VETOED · ${(arm.reason || 'guard refused').slice(0, 44)}`
+      : arm.side === 'HOLD'
+        ? 'HOLD · NO ORDER THIS BAR'
+        : `${arm.side} ${arm.exec}`
+  context.fillText(headline.slice(0, 62), 14, 61)
+
+  // Equity + return
+  context.font = 'bold 32px ui-monospace, SFMono-Regular, Menlo, monospace'
   context.fillStyle = ink
-  context.fillText(arm.equity.toFixed(2), 16, 74)
-  context.font = 'bold 15px ui-monospace, SFMono-Regular, Menlo, monospace'
-  context.fillStyle = arm.returnPct >= 0 ? '#5ad9a4' : '#ff6b81'
-  context.fillText(`${arm.returnPct >= 0 ? '+' : '−'}${Math.abs(arm.returnPct).toFixed(3)}%`, 132, 74)
+  context.fillText(arm.equity.toFixed(2), 16, 108)
+  context.font = 'bold 16px ui-monospace, SFMono-Regular, Menlo, monospace'
+  context.fillStyle = arm.returnPct >= 0 ? green : red
+  context.fillText(`${arm.returnPct >= 0 ? '+' : '−'}${Math.abs(arm.returnPct).toFixed(3)}%`, 150, 108)
   context.font = mono
   context.fillStyle = dim
-  context.fillText(`start ${state.initialCapital.toFixed(2)}`, 232, 73)
+  context.fillText(`start ${state.initialCapital.toFixed(2)}`, 268, 107)
 
   // Equity curve, scaled to its own range
-  const plot = { x: 16, y: 92, w: width - 32, h: 84 }
+  const plot = { x: 16, y: 122, w: width - 210, h: 96 }
   context.strokeStyle = 'rgba(120, 150, 185, 0.18)'
   context.lineWidth = 1
   context.strokeRect(plot.x, plot.y, plot.w, plot.h)
@@ -174,13 +210,32 @@ function drawTerminal(terminal: TerminalParts, arm: FloorArmState, state: FloorS
     const last = values.length - 1
     context.fillStyle = accent
     context.beginPath()
-    context.arc(xOf(last), yOf(values[last]), 3, 0, Math.PI * 2)
+    context.arc(xOf(last), yOf(values[last]), 3.5, 0, Math.PI * 2)
     context.fill()
+    // Where the last trade landed on the curve.
+    if (trade && trade.i >= 0 && trade.i < values.length) {
+      context.beginPath()
+      context.arc(xOf(trade.i), yOf(values[trade.i]), 3, 0, Math.PI * 2)
+      context.fillStyle = green
+      context.fill()
+    }
   } else {
     context.fillStyle = dim
     context.font = mono
     context.fillText('waiting for the first bar', plot.x + 8, plot.y + plot.h / 2)
   }
+
+  // This fly's own tape: the last few things it did, newest first.
+  const tapeX = plot.x + plot.w + 14
+  context.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace'
+  context.fillStyle = dim
+  context.fillText('ITS OWN TAPE', tapeX, plot.y + 10)
+  arm.trades.slice(0, 6).forEach((entry, index) => {
+    const y = plot.y + 30 + index * 15
+    const filled = entry.side === 'BUY' || entry.side === 'SELL'
+    context.fillStyle = filled ? (entry.side === 'BUY' ? green : red) : '#3d4855'
+    context.fillText(entry.label.slice(0, 22), tapeX, y)
+  })
 
   // Ledger rows
   const rows: [string, string][] = [
@@ -188,44 +243,72 @@ function drawTerminal(terminal: TerminalParts, arm: FloorArmState, state: FloorS
     ['EXEC', arm.exec],
     ['FILLS', String(arm.fills)],
     ['VETOES', String(arm.vetoes)],
-    ['FEES', `${Number(arm.fees).toFixed(4)}`],
+    ['FEES', Number(arm.fees).toFixed(4)],
     ['BAR', `${state.bar + 1}/${state.bars}`],
     ['MID', state.mid.toFixed(2)],
     [arm.neural ? 'SIGNAL' : 'SCORE', arm.signalLine],
   ]
-  const top = plot.y + plot.h + 18
+  const top = plot.y + plot.h + 22
   context.font = mono
   rows.forEach(([label, value], index) => {
     const column = index % 4
     const row = Math.floor(index / 4)
     const x = 16 + column * ((width - 32) / 4)
-    const y = top + row * 30
+    const y = top + row * 32
     context.fillStyle = dim
     context.fillText(label, x, y)
+    context.font = 'bold 15px ui-monospace, SFMono-Regular, Menlo, monospace'
     context.fillStyle =
-      label === 'SIDE' ? accent : label === 'EXEC' ? (value === 'FILLED' ? '#5ad9a4' : value === 'VETO' || value === 'BLOCKED' ? '#ff6b81' : ink) : ink
-    context.font = 'bold 14px ui-monospace, SFMono-Regular, Menlo, monospace'
-    context.fillText(value.slice(0, 16), x, y + 15)
+      label === 'SIDE'
+        ? accent
+        : label === 'EXEC'
+          ? value === 'FILLED'
+            ? green
+            : value === 'VETO' || value === 'BLOCKED'
+              ? red
+              : ink
+          : ink
+    context.fillText(value.slice(0, 16), x, y + 16)
     context.font = mono
   })
 
-  // Memory row: the experimental variable, stated on the desk itself
-  const memoryY = top + 74
+  const memoryY = top + 76
   context.fillStyle = '#0e1620'
   context.fillRect(12, memoryY - 14, width - 24, 26)
   context.fillStyle = arm.learning ? amber : dim
   context.fillText(arm.learning ? 'MEMORY UPDATES ON' : 'MEMORY UPDATES OFF', 18, memoryY + 3)
   context.fillStyle = ink
-  context.fillText(arm.memoryLine.slice(0, 40), 190, memoryY + 3)
+  context.fillText(arm.memoryLine.slice(0, 44), 214, memoryY + 3)
 
   // Footer: the reason this bar went the way it did
   context.fillStyle = '#0b121a'
   context.fillRect(0, height - 30, width, 30)
   context.fillStyle = dim
-  context.fillText(arm.reason.slice(0, 86), 14, height - 10)
+  context.fillText((arm.reason || 'no order this bar').slice(0, 96), 14, height - 10)
   if (Math.sin(time * 3) > 0) {
     context.fillStyle = accent
     context.fillRect(width - 16, height - 21, 7, 12)
+  }
+
+  // Trade reaction: a wash over the whole screen that decays, so a fill is unmissable even
+  // while the terminal keeps showing the live numbers underneath.
+  if (flash > 0) {
+    context.globalAlpha = Math.min(0.5, flash * 0.5)
+    context.fillStyle = bandColour
+    context.fillRect(0, 0, width, height)
+    context.globalAlpha = 1
+    context.strokeStyle = bandColour
+    context.lineWidth = 6 + flash * 10
+    context.strokeRect(3, 3, width - 6, height - 6)
+    if (trade && flash > 0.35) {
+      context.font = 'bold 34px ui-monospace, SFMono-Regular, Menlo, monospace'
+      const text = `${trade.side} ${trade.base}`
+      const metric = context.measureText(text)
+      context.fillStyle = 'rgba(5, 8, 12, 0.82)'
+      context.fillRect(width / 2 - metric.width / 2 - 18, height / 2 - 34, metric.width + 36, 52)
+      context.fillStyle = bandColour
+      context.fillText(text, width / 2 - metric.width / 2, height / 2 + 2)
+    }
   }
 
   terminal.texture.needsUpdate = true
@@ -416,6 +499,11 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
       flapPhase: side < 0 ? 0 : 1.7,
       mood: 'idle',
       pulse: 0,
+      eventId: '',
+      flashStart: -99,
+      lastFlash: 0,
+      arm: null,
+      state: null,
     })
   }
 
@@ -455,6 +543,14 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     pointer.y = ((event.clientY - rect.top) / rect.height - 0.5) * 2
   }
   if (!reduced) window.addEventListener('pointermove', onPointerMove)
+
+  /** 1 at the moment of the event, decaying to 0 over the given duration. */
+  const flashLevel = (station: Station) => {
+    // Long enough to be unmissable, short enough that an active season does not strobe.
+    const duration = station.eventId.startsWith('fill') ? 1.6 : 1.0
+    if (station.flashStart < 0) return 0
+    return Math.max(0, Math.min(1, 1 - (clock - station.flashStart) / duration))
+  }
 
   const animateWings = (station: Station, dt: number) => {
     const mood = station.mood
@@ -519,6 +615,14 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     if (mood === 'halted') {
       for (const eye of station.fly.eyes) (eye.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.06
     }
+
+    // A trade reaction is drawn on the screen itself, and the screen has to keep being
+    // repainted while it decays: the terminal is a texture, not a DOM element.
+    const flash = flashLevel(station)
+    if ((flash > 0.001 || station.lastFlash > 0.001) && station.arm && station.state) {
+      drawTerminal(station.terminal, station.arm, station.state, clock, flash)
+    }
+    station.lastFlash = flash
   }
 
   const renderFrame = (dt: number) => {
@@ -650,6 +754,8 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
             screen: visibilityOf(station.terminal.screen),
             keyboard: visibilityOf(station.keyboard.group),
           },
+          flash: Number(flashLevel(station).toFixed(2)),
+          event: station.eventId,
           typing: station.fly.typingTips.map((tip) => {
             const world = new THREE.Vector3()
             tip.getWorldPosition(world)
@@ -673,10 +779,24 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
         if (!arm) return
         const changed = !previous || previous.arms[index].side !== arm.side || previous.bar !== next.bar
         station.mood = arm.mood
+        station.arm = arm
+        station.state = next
         if (changed && (arm.mood === 'buy' || arm.mood === 'sell' || arm.mood === 'veto')) {
           station.pulse = 1
         }
-        drawTerminal(station.terminal, arm, next, clock)
+        // React to the event, not to the bar: a fill of the same bar must not re-trigger.
+        const eventId = arm.lastFill
+          ? `fill:${arm.lastFill.i}`
+          : arm.exec === 'VETO'
+            ? `veto:${next.bar}`
+            : arm.exec === 'BLOCKED'
+              ? `blocked:${next.bar}`
+              : ''
+        if (eventId && eventId !== station.eventId) {
+          station.eventId = eventId
+          station.flashStart = clock
+        }
+        drawTerminal(station.terminal, arm, next, clock, flashLevel(station))
       })
       // New state always draws a frame here rather than waiting for the animation loop.
       // The loop is paused while the floor is off-screen or the tab is hidden, and the

@@ -93,6 +93,15 @@ function buildState(): FloorState {
         : 'frozen',
       neural,
       halted: Boolean(entry?.portfolio.halted),
+      trades: (summary.trades ?? [])
+        .filter((trade) => trade.i <= index)
+        .slice(-6)
+        .reverse()
+        .map((trade) => ({ side: trade.side, label: `${trade.side} ${trade.base_size} @ ${trade.price}` })),
+      lastFill: (() => {
+        const fill = (summary.trades ?? []).filter((trade) => trade.i <= index).at(-1)
+        return fill ? { i: fill.i, side: fill.side, base: fill.base_size, price: fill.price } : null
+      })(),
     }
   })
   return {

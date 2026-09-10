@@ -69,9 +69,8 @@
 
 .floor-stage {
   position: relative;
-  /* Tall enough that the desks, the flies, their terminals and the wall board all fit
-     without clipping at the top of the frame. */
-  height: 640px;
+  /* The floor is the first thing on the page, so it gets the height to be the hero. */
+  height: 700px;
   background: #070b11;
 }
 
