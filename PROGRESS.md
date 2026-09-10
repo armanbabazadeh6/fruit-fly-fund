@@ -153,6 +153,27 @@ Four defects surfaced while verifying the 3D scene, all fixed:
 3. Vite silently dropped the harness page's script tag when the `rollupOptions.input` key
    matched the emitted chunk name. Renaming the key fixed it.
 
+### Activity levers and the reinforcement controls
+
+The flies were quiet because of the gate, not the brain — see `docs/activity.md` for the
+measurement (threshold exceeded on 90-98% of bars, gate open on 27-60%). `--preset active`
+drops the gate requirement and raises the daily order cap to upstream's max of 100; measured
+on one shared season, HOLD went from 50% of bars to 0% and executed trades doubled. The
+per-order cap stays at $10 because upstream's `Settings` validates `order_limit <=
+min(capital, 10)` and this project does not patch vendored code.
+
+`ConfigurableDecoder` is checked field-for-field against upstream's decoder whenever the gate
+is required, so no existing measurement is against a silently different readout.
+
+`--reinforcement pnl|decoy|shuffled|none` separates "the rule used the fly's own outcome"
+from "any dopamine pulse moves these synapses": `decoy` drives the pulse from the benchmark
+instead, `shuffled` permutes a previous run's own schedule (by run id or label), `none` sends
+nothing. `scripts/campaign.sh` runs all four modes over the same disjoint seasons and writes
+`results/report.md`.
+
+UI: fill markers on the equity chart (a triangle per trade, pointing the way the order went),
+and a trade cam that eases the camera to whichever fly just filled.
+
 ### Live streaming, verified end to end
 
 `flyvsly serve` runs the arena in a thread and streams it over Server-Sent Events. A page

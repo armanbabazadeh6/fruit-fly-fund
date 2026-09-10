@@ -20,21 +20,30 @@ import sys
 import time
 from pathlib import Path
 
-from .config import ArenaConfig, ArenaRules, MarketSpec
+from .config import PRESETS, REINFORCEMENT_MODES, ArenaConfig, ArenaRules, MarketSpec
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def _rules(args) -> ArenaRules:
+    """Rule set for a run: a preset, with any explicit flag overriding it.
+
+    Presets exist because upstream's caps are those of a live-trading experiment ($10 per
+    order, 24 orders a day, a required spike gate). Paper runs can afford to be busier, and
+    both flies get exactly the same rules either way.
+    """
+    preset = PRESETS[args.preset]
     return ArenaRules(
         products=tuple(args.products),
         capital=args.capital,
-        order_limit=args.order_limit,
+        order_limit=args.order_limit or preset["order_limit"],
+        daily_orders=args.daily_orders or preset["daily_orders"],
+        require_gate=preset["require_gate"] if args.require_gate is None else args.require_gate,
+        reinforcement=args.reinforcement,
         paper_fee=args.paper_fee,
         decoder_threshold_hz=args.decoder_threshold_hz,
         neural_ms=args.neural_ms,
-        daily_orders=args.daily_orders,
-    )
+    ).validate()
 
 
 def _market(args, repeat: int) -> MarketSpec:
@@ -203,6 +212,9 @@ def cmd_run(args):
         out=Path(args.out),
         label=args.label,
         max_wall_seconds=args.max_wall_seconds,
+        preset=args.preset,
+        shuffle_reference=args.shuffle_reference,
+        shuffle_seed=args.shuffle_seed,
     )
     if args.engine == "neural":
         graph = Path(args.data) / "graph.npz"
@@ -341,11 +353,21 @@ def cmd_list(args):
 
 
 def cmd_report(args):
-    from .report import load_manifests, summarise
+    from .report import load_manifests, markdown_table, summarise
 
     report = summarise(load_manifests(args.runs))
     if args.json:
         print(json.dumps(report, indent=2))
+        return 0
+    if args.table:
+        table = markdown_table(report)
+        if args.write:
+            path = Path(args.write)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(table + "\n")
+            print(f"wrote {path}")
+        else:
+            print(table)
         return 0
     for group in report["groups"]:
         print(
@@ -390,13 +412,28 @@ def main(argv=None):
     )
     run.add_argument("--initial-price", default="60000")
     run.add_argument("--label")
+    run.add_argument(
+        "--preset",
+        choices=sorted(PRESETS),
+        default="upstream",
+        help="upstream keeps Stonkfly's conservative caps; active is a busier paper-only rule set",
+    )
+    run.add_argument(
+        "--reinforcement",
+        choices=REINFORCEMENT_MODES,
+        default="pnl",
+        help="pnl is upstream's own-outcome pulse; decoy/shuffled/none are the controls",
+    )
+    run.add_argument("--shuffle-reference", default=None, help="run id whose pulse schedule to permute")
+    run.add_argument("--shuffle-seed", type=int, default=0)
+    run.add_argument("--require-gate", action=argparse.BooleanOptionalAction, default=None)
     run.add_argument("--out", default="runs")
     run.add_argument("--data", default="data")
     run.add_argument("--products", nargs="+", default=["BTC-USDC"])
     run.add_argument("--capital", default="100")
-    run.add_argument("--order-limit", default="10")
+    run.add_argument("--order-limit", default=None)
     run.add_argument("--paper-fee", default="0.006")
-    run.add_argument("--daily-orders", type=int, default=24)
+    run.add_argument("--daily-orders", type=int, default=None)
     run.add_argument("--decoder-threshold-hz", type=float, default=2)
     run.add_argument("--neural-ms", type=float, default=500)
     run.add_argument("--max-wall-seconds", type=float, default=None)
@@ -427,6 +464,8 @@ def main(argv=None):
     report = sub.add_parser("report", help="aggregate repeated seasons")
     report.add_argument("--runs", default="runs")
     report.add_argument("--json", action="store_true")
+    report.add_argument("--table", action="store_true", help="markdown table of every group")
+    report.add_argument("--write", default=None, help="write the table to this path")
     report.set_defaults(func=cmd_report)
 
     args = parser.parse_args(argv)

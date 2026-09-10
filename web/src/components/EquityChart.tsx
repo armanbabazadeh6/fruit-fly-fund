@@ -16,6 +16,8 @@ interface EquityChartProps {
   onSelect: (index: number) => void
   visibleBars?: number
   provisional?: boolean
+  /** Every fill in the season, so the chart shows when trading actually happened. */
+  fills?: { id: string; i: number; side: string; value: number }[]
 }
 
 const HEIGHT = 300
@@ -38,6 +40,7 @@ export function EquityChart({
   onSelect,
   visibleBars,
   provisional,
+  fills = [],
 }: EquityChartProps) {
   const [ref, width] = useMeasuredWidth<HTMLDivElement>()
   const series = [
@@ -146,6 +149,29 @@ export function EquityChart({
               <circle key={entry.key} cx={markerX} cy={y(value)} r="3.2" fill={entry.color} stroke="var(--bg)" strokeWidth="1.4" />
             )
           })}
+
+          {/* Fills: a triangle per trade, pointing the way the order went. */}
+          {fills
+            .filter((fill) => fill.i >= 0 && fill.i < shown && Number.isFinite(fill.value))
+            .map((fill, index) => {
+              const colour =
+                plotted.find((entry) => entry.key === fill.id)?.color ?? 'var(--ink-2)';
+              const cx = x(fill.i);
+              const cy = y(fill.value);
+              const buy = fill.side === 'BUY';
+              const tip = buy ? cy - 9 : cy + 9;
+              const base = buy ? cy - 2 : cy + 2;
+              return (
+                <polygon
+                  key={`${fill.id}-${fill.i}-${index}`}
+                  points={`${cx},${tip} ${cx - 4},${base} ${cx + 4},${base}`}
+                  fill={colour}
+                  stroke="var(--bg)"
+                  strokeWidth="1"
+                  opacity="0.95"
+                />
+              );
+            })}
 
           {[0, Math.floor((shown - 1) / 2), shown - 1].map((index) => (
             <text key={index} x={x(index)} y={HEIGHT - 8} textAnchor="middle" className="equity-tick num">

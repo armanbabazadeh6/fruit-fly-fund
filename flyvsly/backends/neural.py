@@ -33,17 +33,29 @@ def ensure_data_root(root: Path) -> Path:
 class NeuralBackend:
     engine = "neural"
 
-    def __init__(self, settings, data_root="data"):
+    def __init__(self, settings, data_root="data", require_gate=True):
         ensure_data_root(Path(data_root))
+        from stonkfly.neural.common import annotations
         from stonkfly.neural.controller import FlyController
 
+        from ..decoder import ConfigurableDecoder
+
         self.controller = FlyController(settings)
+        # Swap in our gate-optional decoder, constructed from the same cell identities
+        # upstream selected, so the only difference is whether the gate is required.
+        self.controller.decoder = ConfigurableDecoder(
+            self.controller.brain.ids,
+            annotations(self.controller.brain.ids),
+            settings.decoder_threshold_hz,
+            require_gate=require_gate,
+        )
         brain = self.controller.brain
         self.settings = settings
         self.label = (
             f"MaleCNS v1.0 retained graph, {brain.n:,} neurons, {len(brain.post):,} connections"
         )
         self.learning = bool(settings.learning)
+        self.require_gate = bool(require_gate)
         self.memory_rule = brain.rule_parameters
         self.plastic_edges = int(len(brain.circuit["edges"]))
 
@@ -62,9 +74,16 @@ class NeuralBackend:
             "memory_rule": self.memory_rule,
             "decoder_cells": self.controller.decoder.identities,
             "decoder": (
-                "Fixed DNp20 mean right-minus-left firing with a DNpe017 spike gate. "
-                "Engineered interface, not a discovered buy/sell neuron."
+                "DNp20 mean right-minus-left firing, engineered interface rather than a "
+                "discovered buy/sell neuron. "
+                + (
+                    "Upstream's DNpe017 spike gate is required."
+                    if self.require_gate
+                    else "The DNpe017 gate is disabled (our change): the difference alone "
+                    "decides, which is why this run trades far more often."
+                )
             ),
+            "decoder_gate_required": self.require_gate,
             "claims": (
                 "Neural state is real simulation state from the retained MaleCNS v1.0 graph. "
                 "Profitable learning has not been demonstrated by upstream or here."

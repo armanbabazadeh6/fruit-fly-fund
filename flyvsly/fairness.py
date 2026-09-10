@@ -12,7 +12,7 @@ from decimal import Decimal
 
 from stonkfly.config import Settings
 
-from .config import EXPERIMENTAL_VARIABLE, ArenaRules
+from .config import EXPERIMENTAL_VARIABLE, EXTENSION_FIELDS, ArenaRules
 
 
 def arm_settings(rules: ArenaRules, learning: bool) -> Settings:
@@ -69,7 +69,9 @@ def starting_conditions(rules: ArenaRules) -> dict:
     on = arm_settings(rules, True)
     off = arm_settings(rules, False)
     check = assert_only_learning_differs(on, off)
+    extensions = {field: getattr(rules, field) for field in EXTENSION_FIELDS}
     return {
+        "extensions_identical_for_both_flies": extensions,
         "capital_usdc": str(rules.capital),
         "order_limit_usdc": str(rules.order_limit),
         "paper_fee_per_side": str(rules.paper_fee),

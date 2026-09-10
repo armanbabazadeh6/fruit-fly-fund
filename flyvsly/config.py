@@ -20,6 +20,23 @@ from pathlib import Path
 # The one and only experimental difference between the two competitors.
 EXPERIMENTAL_VARIABLE = "learning"
 
+# Rule fields this project adds on top of upstream's Settings. They must be identical for
+# both arms, and they are recorded in the fairness block so a reader can see them.
+EXTENSION_FIELDS = ("require_gate", "reinforcement")
+
+REINFORCEMENT_MODES = ("pnl", "decoy", "shuffled", "none")
+
+# Activity presets. `upstream` keeps Stonkfly's conservative live-trading caps; `active`
+# raises only the paper-only execution limits, identically for both flies.
+# `active` cannot raise the per-order cap: upstream's Settings validates order_limit against
+# min(capital, 10) and capital against 100, and this project does not patch vendored code. So
+# activity comes from the two levers that are ours — the gate, and the daily order limit
+# (upstream allows up to 100) — plus running more bars.
+PRESETS = {
+    "upstream": {"order_limit": "10", "daily_orders": 24, "require_gate": True},
+    "active": {"order_limit": "10", "daily_orders": 100, "require_gate": False},
+}
+
 
 @dataclass(frozen=True)
 class ArenaRules:
@@ -43,12 +60,39 @@ class ArenaRules:
     decoder_threshold_hz: float = 2
     paper_fee: str = "0.006"
 
+    # --- our extensions, not upstream's trading rules -------------------------------
+    # Upstream requires a DNpe017 spike before the DNp20 difference may act. Dropping that
+    # requirement is the single biggest lever on how much the flies trade; measured, the
+    # gate was open on 27-60% of bars while the directional difference exceeded threshold on
+    # 90-98%. Applied identically to both flies and recorded in every run.
+    require_gate: bool = True
+    # How the engineered reward/aversive pulse is scheduled. See `docs/activity.md`.
+    #   pnl     - upstream: the fly's own marked-to-bid equity change (default)
+    #   decoy   - the buy-and-hold benchmark's change: same statistics, decoupled from the
+    #             fly's own actions, so a difference cannot be read as credit assignment
+    #   shuffled- a seeded permutation of a reference run's pulse schedule
+    #   none    - no pulse at all
+    reinforcement: str = "pnl"
+
     def as_settings_kwargs(self, learning: bool) -> dict:
-        return {**dataclasses.asdict(self), EXPERIMENTAL_VARIABLE: bool(learning)}
+        # Upstream's Settings knows nothing about our extensions, so they are stripped here
+        # and carried separately. `fairness.starting_conditions` records them.
+        payload = dataclasses.asdict(self)
+        for field in EXTENSION_FIELDS:
+            payload.pop(field)
+        return {**payload, EXPERIMENTAL_VARIABLE: bool(learning)}
 
     def signature(self) -> str:
         payload = json.dumps(dataclasses.asdict(self), sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+    def validate(self):
+        if self.reinforcement not in REINFORCEMENT_MODES:
+            raise ValueError(
+                f"Unknown reinforcement mode {self.reinforcement!r}; "
+                f"expected one of {REINFORCEMENT_MODES}"
+            )
+        return self
 
 
 @dataclass(frozen=True)
@@ -81,6 +125,14 @@ class MarketSpec:
         payload = json.dumps(dataclasses.asdict(self), sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
+    def validate(self):
+        if self.reinforcement not in REINFORCEMENT_MODES:
+            raise ValueError(
+                f"Unknown reinforcement mode {self.reinforcement!r}; "
+                f"expected one of {REINFORCEMENT_MODES}"
+            )
+        return self
+
 
 @dataclass(frozen=True)
 class ArenaConfig:
@@ -93,6 +145,9 @@ class ArenaConfig:
     out: Path = Path("runs")
     label: str | None = None
     checkpoint_every: int = 0        # 0 = only at end of run
+    shuffle_reference: str | None = None   # run id whose pulse schedule is permuted
+    shuffle_seed: int = 0
+    preset: str = "upstream"
     thread_arms: bool = True         # arms are independent; the native kernel releases the GIL
     max_wall_seconds: float | None = None
 

@@ -159,11 +159,11 @@ class Arm:
             self.ledger.close()
 
 
-def _build_backend(engine, settings, data_root, seed):
+def _build_backend(engine, settings, data_root, seed, require_gate=True):
     if engine == "neural":
         from .backends.neural import NeuralBackend
 
-        return NeuralBackend(settings, data_root=data_root)
+        return NeuralBackend(settings, data_root=data_root, require_gate=require_gate)
     from .backends.procedural import ProceduralBackend
 
     return ProceduralBackend(settings, seed=seed)
@@ -220,6 +220,7 @@ class _ArmThread(threading.Thread):
                 settings,
                 self.arena.data_root,
                 self.arena.config.market.seed + self.index,
+                self.arena.rules.require_gate,
             )
             self.arm_obj = Arm(
                 self.persona,
@@ -279,6 +280,7 @@ class Arena:
         self.out_dir = out
         self.season = season or build_season(config.market)
         season = self.season
+        self._prepare_reinforcement(season)
 
         conditions = starting_conditions(rules)
         assert_only_learning_differs(arm_settings(rules, True), arm_settings(rules, False))
@@ -360,6 +362,9 @@ class Arena:
                 "bar_seconds": config.market.bar_seconds,
                 "season": season.describe(),
                 "rules": json.loads(json.dumps(dataclasses.asdict(rules), default=str)),
+                "reinforcement_mode": rules.reinforcement,
+                "rule_preset": config.preset,
+                "decoder_gate_required": rules.require_gate,
                 "starting_conditions": conditions,
                 "hardware": hardware_report(self.data_root),
                 "duration_seconds": summary["duration_seconds"],
@@ -414,7 +419,11 @@ class Arena:
         for index, persona in enumerate(PERSONAS):
             settings = arm_settings(self.rules, persona["learning"])
             backend = _build_backend(
-                self.config.engine, settings, self.data_root, self.config.market.seed + index
+                self.config.engine,
+                settings,
+                self.data_root,
+                self.config.market.seed + index,
+                self.rules.require_gate,
             )
             arms.append(
                 Arm(
@@ -503,6 +512,50 @@ class Arena:
 
     # -- per-bar plumbing ------------------------------------------------------------
 
+    def _stimulus(self, i, equity, anchor):
+        """The engineered reward/aversive pulse for one bar, under the configured mode.
+
+        `pnl` is upstream's rule: the fly's own marked-to-bid equity change. The other modes
+        exist to separate "the memory rule used its own outcome" from "any dopamine pulse
+        moves weights at all" — see `docs/activity.md`.
+        """
+        mode = self.rules.reinforcement
+        if mode == "pnl":
+            return reinforcement(equity, anchor, self.rules.reward_deadband)
+        if mode == "none":
+            return "none", D(0)
+        if mode == "decoy":
+            # The benchmark's change, not the fly's: same distribution of pulses over the
+            # season, causally unrelated to anything the fly did.
+            if i == 0:
+                return "none", D(0)
+            curve = self.decoy_curve
+            return reinforcement(curve[i], curve[i - 1], self.rules.reward_deadband)
+        if mode == "shuffled":
+            kind = self.shuffled_schedule[i % len(self.shuffled_schedule)]
+            return kind, D(0)
+        raise ValueError(f"Unknown reinforcement mode {mode!r}")
+
+    def _prepare_reinforcement(self, season):
+        """Build whatever the configured mode needs before the first bar."""
+        mode = self.rules.reinforcement
+        if mode == "decoy":
+            from .benchmark import buy_and_hold
+
+            curve = buy_and_hold(season, D(self.rules.capital), D(self.rules.paper_fee))["curve"]
+            self.decoy_curve = [D(str(value)) for value in curve]
+        elif mode == "shuffled":
+            from .shuffle import load_schedule, permute
+
+            reference = self.config.shuffle_reference
+            if not reference:
+                raise ValueError(
+                    "reinforcement='shuffled' needs a reference recording: pass "
+                    "--shuffle-reference <run id>"
+                )
+            schedule = load_schedule(self.config.out, reference)
+            self.shuffled_schedule = permute(schedule, self.config.shuffle_seed)
+
     def _context(self, i):
         product = self.rules.products[0]
         season = self.season
@@ -579,9 +632,7 @@ class Arena:
             if halted and not arm.stats["halted_reason"]:
                 arm.stats["halted_reason"] = halted
         equity = arm.ledger.equity(quotes)
-        kind, delta = reinforcement(
-            equity, arm.ledger.get("anchor"), rules.reward_deadband
-        )
+        kind, delta = self._stimulus(context["i"], equity, arm.ledger.get("anchor"))
         signal = None
         if blocked is None:
             signal = arm.backend.observe(context["frame"], kind, context["history"])

@@ -325,6 +325,15 @@ export default function App() {
   const summaries = shown.summary.arms
   const initialCapital = shown.summary.initial_capital
   const firstBarT = shown.season.bars[0]?.t ?? 0
+  // Every fill in the season, for the equity chart's trade markers.
+  const fillMarkers = arms.flatMap((arm) =>
+    (summaries[arm.id]?.trades ?? []).map((trade) => ({
+      id: arm.id,
+      i: trade.i,
+      side: trade.side,
+      value: summaries[arm.id]?.curve?.[trade.i] ?? Number(trade.equity_after),
+    })),
+  )
   const firstTimestamp = observations[0]?.t ?? firstBarT
 
   return (
@@ -422,6 +431,7 @@ export default function App() {
             arms={arms}
             visibleBars={observations.length || bars}
             provisional={Boolean(live && !live.finished)}
+            fills={fillMarkers}
           />
           <Commentary
             arms={arms}

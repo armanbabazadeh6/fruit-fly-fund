@@ -50,7 +50,8 @@ either way: reproduce it with `--repeats 6` and more bars before reading the mea
 
 ![The trading floor](docs/screenshot-floor.png)
 
-A **3D / 8-bit** toggle switches the scene between the rendered floor and a pixel-art pass
+Two toggles sit in the floor header: **trade cam** eases the camera to whichever fly just
+filled, and **3D / 8-bit** switches the scene between the rendered floor and a pixel-art pass
 (289 distinct colours against 36,981, measured): the retro mode looks like the artwork that
 inspired the project, with the live numbers kept in crisp text above the canvas because
 pixelation makes the on-screen terminals decorative.
@@ -68,8 +69,28 @@ pixelation makes the on-screen terminals decorative.
   learning has not been demonstrated, and nothing here changes that.
 - Rivalry commentary is entertainment. Procedural demo mode is never neural activity.
 
-`docs/` has the detail: [model](docs/model.md), [fairness](docs/fairness.md),
-[telemetry](docs/telemetry.md), [hardware](docs/hardware.md).
+### Making them trade
+
+The flies are quiet by default because of upstream's **gate**, not because of the brain: the
+DNp20 difference exceeds ±2 Hz on 90–98% of bars, but the DNpe017 gate is open on only
+27–60% of them, and a closed gate forces HOLD.
+
+```sh
+# Every bar produces an order instead of half of them: HOLD 50% -> 0%, fills 2x
+flyvsly run --preset active --bars 48 --repeats 3
+
+# The reinforcement controls: how the reward pulse is scheduled, and what that lets you claim
+flyvsly run --preset active --reinforcement decoy     # matched pulses, no contingency
+flyvsly run --preset active --reinforcement none      # no pulse at all
+flyvsly run --preset active --reinforcement shuffled --shuffle-reference campaign-active-pnl
+```
+
+Trading more is not trading better: on the same season the busier preset went from −0.287% to
+−0.604%, because every fill pays the fee. Measurements and the full lever list are in
+[activity](docs/activity.md).
+
+`docs/` has the rest: [model](docs/model.md), [fairness](docs/fairness.md),
+[telemetry](docs/telemetry.md), [hardware](docs/hardware.md), [activity](docs/activity.md).
 
 ## Run it
 

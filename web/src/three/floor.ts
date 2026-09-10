@@ -88,6 +88,7 @@ interface Station {
 export interface FloorHandle {
   update(state: FloorState): void
   setPixelMode(enabled: boolean): void
+  setTradeCam(enabled: boolean): void
   setPaused(paused: boolean): void
   diagnostics(): Record<string, unknown>
   dispose(): void
@@ -411,6 +412,9 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   // The terminal screens lose their legibility at this resolution, which is why the live
   // numbers are repeated in HTML above the canvas.
   const pixel = { enabled: false, scale: 3.6, levels: 9 }
+  // Trade cam follows whichever fly just traded: the camera eases toward that desk for a
+  // few seconds, then returns. Purely a framing move — it changes nothing about the run.
+  const tradeCam = { enabled: false, focus: -1, until: -99, x: 0, zoom: 1 }
   let target: THREE.WebGLRenderTarget | null = null
   const quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
   const quadMaterial = new THREE.ShaderMaterial({
@@ -697,9 +701,16 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     for (const station of stations) animateWings(station, dt)
     if (!reduced) {
       const fit = Math.max(0.86, Math.min(1.34, 1400 / width))
-      camera.position.x += (pointer.x * 0.55 - camera.position.x) * 0.045
-      camera.position.y += (cameraHeight * fit + pointer.y * -0.28 - camera.position.y) * 0.045
-      camera.lookAt(0, LOOK_AT_Y, 0)
+      const focused = tradeCam.enabled && tradeCam.focus >= 0 && tradeCam.until > clock
+      const wantX = focused ? stations[tradeCam.focus].side * spread * 0.42 : 0
+      const wantZoom = focused ? 0.9 : 1
+      tradeCam.x += (wantX - tradeCam.x) * 0.05
+      tradeCam.zoom += (wantZoom - tradeCam.zoom) * 0.05
+      const distance = cameraDistance * fit * tradeCam.zoom
+      camera.position.x += (tradeCam.x + pointer.x * 0.55 - camera.position.x) * 0.045
+      camera.position.y += (cameraHeight * fit * tradeCam.zoom + pointer.y * -0.28 - camera.position.y) * 0.045
+      camera.position.z += (distance - camera.position.z) * 0.045
+      camera.lookAt(tradeCam.x * 0.6, LOOK_AT_Y, 0)
     }
     if (pixel.enabled && target) {
       renderer.setRenderTarget(target)
@@ -794,10 +805,38 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     }
   }
 
-  const publishDiagnostics = () => {
-    container.dataset.floor = JSON.stringify({
+  /**
+   * One diagnostics object, used by both the DOM channel and the debug hook.
+   *
+   * There used to be two of these — one for the `data-floor` attribute and one behind
+   * `window.__flyvslyFloor` — and they drifted, which is how a "the flies are gone" bug
+   * survived a green check. Anything reported about the scene lives here.
+   */
+  const buildDiagnostics = () => {
+    let triangles = 0
+    scene.traverse((object) => {
+      const mesh = object as THREE.Mesh
+      if (mesh.isMesh && mesh.geometry) {
+        const geometry = mesh.geometry as THREE.BufferGeometry
+        triangles += geometry.index
+          ? geometry.index.count / 3
+          : (geometry.attributes.position?.count ?? 0) / 3
+      }
+    })
+    return {
+      pixelArt: { ...pixel },
+      tradeCam: {
+        enabled: tradeCam.enabled,
+        focus: tradeCam.focus,
+        x: Number(tradeCam.x.toFixed(2)),
+        zoom: Number(tradeCam.zoom.toFixed(3)),
+      },
       render: { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles },
-      camera: camera.position.toArray().map((value) => Number(value.toFixed(2))),
+      camera: camera.position.toArray().map((v) => Number(v.toFixed(2))),
+      canvas: [renderer.domElement.width, renderer.domElement.height],
+      triangles: Math.round(triangles),
+      paused,
+      reducedMotion: reduced,
       stations: stations.map((station) => {
         const project = (object: THREE.Object3D) => {
           const vector = new THREE.Vector3()
@@ -844,7 +883,11 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
           }),
         }
       }),
-    })
+    }
+  }
+
+  const publishDiagnostics = () => {
+    container.dataset.floor = JSON.stringify(buildDiagnostics())
   }
 
   return {
@@ -872,6 +915,10 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
         if (eventId && eventId !== station.eventId) {
           station.eventId = eventId
           station.flashStart = clock
+          if (tradeCam.enabled && eventId.startsWith('fill')) {
+            tradeCam.focus = index
+            tradeCam.until = clock + 3.4
+          }
         }
         drawTerminal(station.terminal, arm, next, clock, flashLevel(station))
       })
@@ -894,44 +941,21 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
       renderFrame(0)
       publishDiagnostics()
     },
+    setTradeCam(enabled: boolean) {
+      tradeCam.enabled = enabled
+      if (!enabled) {
+        tradeCam.focus = -1
+        tradeCam.until = -99
+      }
+      renderFrame(0)
+      publishDiagnostics()
+    },
     setPaused(next: boolean) {
       paused = next
       lastTime = performance.now()
     },
     diagnostics() {
-      const project = (object: THREE.Object3D) => {
-        const vector = new THREE.Vector3()
-        object.getWorldPosition(vector)
-        const ndc = vector.clone().project(camera)
-        return { x: Number(ndc.x.toFixed(3)), y: Number(ndc.y.toFixed(3)), z: Number(ndc.z.toFixed(3)) }
-      }
-      let triangles = 0
-      scene.traverse((object) => {
-        const mesh = object as THREE.Mesh
-        if (mesh.isMesh && mesh.geometry) {
-          const geometry = mesh.geometry as THREE.BufferGeometry
-          triangles += geometry.index ? geometry.index.count / 3 : (geometry.attributes.position?.count ?? 0) / 3
-        }
-      })
-      return {
-        pixelArt: { ...pixel },
-        stations: stations.map((station) => ({
-          side: station.side,
-          fly: project(station.fly.body),
-          screen: project(station.terminal.screen),
-          wings: [
-            Number(station.fly.leftWing.rotation.z.toFixed(3)),
-            Number(station.fly.rightWing.rotation.z.toFixed(3)),
-          ],
-          mood: station.mood,
-        })),
-        camera: camera.position.toArray().map((v) => Number(v.toFixed(2))),
-        canvas: [renderer.domElement.width, renderer.domElement.height],
-        triangles: Math.round(triangles),
-        render: { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles },
-        paused,
-        reducedMotion: reduced,
-      }
+      return buildDiagnostics()
     },
     dispose() {
       disposed = true

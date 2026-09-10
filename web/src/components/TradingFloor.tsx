@@ -84,6 +84,7 @@ export function TradingFloor({
   const [fallback, setFallback] = useState(false)
   const [loading, setLoading] = useState(true)
   const [pixel, setPixel] = useState(false)
+  const [tradeCam, setTradeCam] = useState(false)
 
   const observation = observations[index] ?? null
   const mid = seasonBars[index]?.mid ?? 0
@@ -219,6 +220,24 @@ export function TradingFloor({
       <div className="panel-head">
         <span className="panel-title">The trading floor</span>
         <span className="floor-head-chips">
+          {!fallback && (
+            <button
+              type="button"
+              className={`chip floor-mode ${tradeCam ? 'is-on' : ''}`}
+              onClick={() => {
+                const next = !tradeCam
+                setTradeCam(next)
+                floorRef.current?.setTradeCam(next)
+              }}
+              title={
+                tradeCam
+                  ? 'Stop following trades'
+                  : 'Trade cam: ease the camera to whichever fly just filled'
+              }
+            >
+              {tradeCam ? 'following' : 'trade cam'}
+            </button>
+          )}
           {!fallback && (
             <button
               type="button"
