@@ -575,8 +575,15 @@ def main(argv=None):
     run.add_argument(
         "--starting",
         nargs="+",
+        # `extend`, not the default: a second --starting flag must add to the first rather than
+        # replace it, which silently dropped one arm's weights and left the run refusing to
+        # start with a message about the arm that was still there.
+        action="extend",
         default=None,
-        help="per-arm starting weights, e.g. --starting gordon=trained:runs/brains/train/gordon.npz",
+        help=(
+            "per-arm starting weights, either as one flag with both pairs "
+            "(--starting gordon=trained:c.npz warren=baseline) or as two flags"
+        ),
     )
     run.add_argument("--save-brains", default=None, help="directory to checkpoint both brains into")
     run.add_argument(

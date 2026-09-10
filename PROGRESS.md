@@ -162,6 +162,21 @@ each other well beyond the spare-core count. A twelve-run campaign that should t
 three. Anything longer than a two-season campaign belongs on the desktop; on the laptop, prefer
 many short seasons.
 
+### Verified end to end on real data
+
+- A training run on the newest real BTC-USDC season completed with 256-cell population vectors
+  on every bar and both brains checkpointed (7.1 MB each: the weight array is mostly repeated
+  contact magnitudes, so it compresses hard). `changed_before_reset: 3386` is what the trained
+  checkpoint carried, which is the number the reset control turns on.
+- An exam run applied those weights and recorded `starting_weights` with the checkpoint's
+  sha256 and `differing_fields: ["starting_weights"]` — the fairness block switches away from
+  `learning` exactly as designed, with the control fly on the reconstructed baseline.
+- A readout was fitted from the fly's own activity. Its own metrics are the honest headline:
+  **training accuracy 1.0 on 34 bars with 256 features, holdout 0.583 against a base rate of
+  0.583 on 12 bars** — a memorised fit, and `fitreadout` now says so in warnings. That is a
+  demonstration that the pipeline works, not a model to trust; a real fit needs many more
+  seasons and belongs on the desktop.
+
 ### Exam, reset and the fitted readout
 
 Three protocols, all in `docs/experiments.md`:
