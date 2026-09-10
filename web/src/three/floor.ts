@@ -87,6 +87,7 @@ interface Station {
 
 export interface FloorHandle {
   update(state: FloorState): void
+  setPixelMode(enabled: boolean): void
   setPaused(paused: boolean): void
   diagnostics(): Record<string, unknown>
   dispose(): void
@@ -405,6 +406,72 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   floor.name = 'floor'
   scene.add(floor)
 
+  // Retro pass: render the whole scene into a small target, then upscale it with
+  // nearest-neighbour filtering and a quantised palette so it reads as 8-bit pixel art.
+  // The terminal screens lose their legibility at this resolution, which is why the live
+  // numbers are repeated in HTML above the canvas.
+  const pixel = { enabled: false, scale: 3.6, levels: 9 }
+  let target: THREE.WebGLRenderTarget | null = null
+  const quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+  const quadMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      tDiffuse: { value: null },
+      levels: { value: pixel.levels },
+      pixels: { value: new THREE.Vector2(1, 1) },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D tDiffuse;
+      uniform float levels;
+      varying vec2 vUv;
+      // 4x4 Bayer matrix: dithering before quantisation stops gradients banding, which is
+      // what separates 8-bit art from a posterised photograph.
+      float bayer(vec2 position) {
+        int x = int(mod(position.x, 4.0));
+        int y = int(mod(position.y, 4.0));
+        int index = x + y * 4;
+        float matrix[16];
+        matrix[0] = 0.0;  matrix[1] = 8.0;  matrix[2] = 2.0;  matrix[3] = 10.0;
+        matrix[4] = 12.0; matrix[5] = 4.0;  matrix[6] = 14.0; matrix[7] = 6.0;
+        matrix[8] = 3.0;  matrix[9] = 11.0; matrix[10] = 1.0; matrix[11] = 9.0;
+        matrix[12] = 15.0; matrix[13] = 7.0; matrix[14] = 13.0; matrix[15] = 5.0;
+        float value = 0.0;
+        for (int i = 0; i < 16; i++) {
+          if (i == index) value = matrix[i];
+        }
+        return value / 16.0 - 0.5;
+      }
+      void main() {
+        vec3 colour = texture2D(tDiffuse, vUv).rgb;
+        float offset = bayer(gl_FragCoord.xy) / levels;
+        colour = floor((colour + offset) * levels + 0.5) / levels;
+        // A touch of extra contrast so the darks stay inky, as in 16-bit console art.
+        colour = clamp((colour - 0.5) * 1.08 + 0.5, 0.0, 1.0);
+        gl_FragColor = vec4(colour, 1.0);
+      }
+    `,
+    depthTest: false,
+    depthWrite: false,
+  })
+  const quadScene = new THREE.Scene()
+  quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), quadMaterial))
+
+  const buildTarget = () => {
+    target?.dispose()
+    target = new THREE.WebGLRenderTarget(
+      Math.max(80, Math.round(width / pixel.scale)),
+      Math.max(60, Math.round(height / pixel.scale)),
+      { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: true },
+    )
+    quadMaterial.uniforms.pixels.value.set(target.width, target.height)
+  }
+
   const stations: Station[] = []
   const accents = ['#ffb454', '#5ec8ff']
 
@@ -535,6 +602,7 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     camera.position.set(0, cameraHeight * fit, cameraDistance * fit)
     camera.lookAt(0, 0.75, 0)
     camera.updateProjectionMatrix()
+    buildTarget()
   }
 
   const onPointerMove = (event: PointerEvent) => {
@@ -633,7 +701,16 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
       camera.position.y += (cameraHeight * fit + pointer.y * -0.28 - camera.position.y) * 0.045
       camera.lookAt(0, LOOK_AT_Y, 0)
     }
-    renderer.render(scene, camera)
+    if (pixel.enabled && target) {
+      renderer.setRenderTarget(target)
+      renderer.render(scene, camera)
+      renderer.setRenderTarget(null)
+      quadMaterial.uniforms.tDiffuse.value = target.texture
+      quadMaterial.uniforms.levels.value = pixel.levels
+      renderer.render(quadScene, quadCamera)
+    } else {
+      renderer.render(scene, camera)
+    }
   }
 
   const loop = () => {
@@ -809,6 +886,14 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
         publishDiagnostics()
       }
     },
+    setPixelMode(enabled: boolean) {
+      if (pixel.enabled === enabled) return
+      pixel.enabled = enabled
+      renderer.setPixelRatio(enabled ? 1 : Math.min(window.devicePixelRatio || 1, 2))
+      applySize()
+      renderFrame(0)
+      publishDiagnostics()
+    },
     setPaused(next: boolean) {
       paused = next
       lastTime = performance.now()
@@ -829,6 +914,7 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
         }
       })
       return {
+        pixelArt: { ...pixel },
         stations: stations.map((station) => ({
           side: station.side,
           fly: project(station.fly.body),

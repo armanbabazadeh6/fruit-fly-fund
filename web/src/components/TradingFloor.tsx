@@ -83,6 +83,7 @@ export function TradingFloor({
   const stateRef = useRef<FloorState | null>(null)
   const [fallback, setFallback] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [pixel, setPixel] = useState(false)
 
   const observation = observations[index] ?? null
   const mid = seasonBars[index]?.mid ?? 0
@@ -218,6 +219,24 @@ export function TradingFloor({
       <div className="panel-head">
         <span className="panel-title">The trading floor</span>
         <span className="floor-head-chips">
+          {!fallback && (
+            <button
+              type="button"
+              className={`chip floor-mode ${pixel ? 'is-on' : ''}`}
+              onClick={() => {
+                const next = !pixel
+                setPixel(next)
+                floorRef.current?.setPixelMode(next)
+              }}
+              title={
+                pixel
+                  ? 'Back to the rendered floor'
+                  : '8-bit mode: pixelates the scene. The numbers move to the strip above.'
+              }
+            >
+              {pixel ? '8-bit' : '3D'}
+            </button>
+          )}
           <span className={`chip ${engine === 'neural' ? 'chip-good' : 'chip-warn'}`}>
             {engine === 'neural' ? 'MaleCNS v1.0 on the desk' : 'procedural demo — not neural'}
           </span>
@@ -270,6 +289,18 @@ export function TradingFloor({
                   {summary?.fills ?? 0} / {summary?.vetoes ?? 0} / {usd(summary?.fees_paid ?? '0', 3)}
                 </span>
               </span>
+              {/* In 8-bit mode the screens are decorative, so the trade that just happened is
+                  repeated here, in text that cannot be pixelated. */}
+              <span className="floor-pair num floor-minor">
+                <span className="floor-pair-label">last trade</span>
+                <span>
+                  {state.arms.find((a) => a.id === arm.id)?.lastFill
+                    ? `${state.arms.find((a) => a.id === arm.id)!.lastFill!.side} ${
+                        state.arms.find((a) => a.id === arm.id)!.lastFill!.base
+                      } @ ${usd(state.arms.find((a) => a.id === arm.id)!.lastFill!.price)}`
+                    : 'none yet'}
+                </span>
+              </span>
               {entry?.portfolio.halted && <span className="chip chip-bad">halted</span>}
             </div>
           )
@@ -297,9 +328,22 @@ export function TradingFloor({
           </div>
         </div>
       ) : (
-        <div className="floor-stage" ref={stageRef} role="img" aria-label="Two fly traders at their terminals">
+        <div
+          className={`floor-stage ${pixel ? 'is-pixel' : ''}`}
+          ref={stageRef}
+          role="img"
+          aria-label="Two fly traders at their terminals"
+        >
           {loading && <span className="floor-loading">building the floor…</span>}
         </div>
+      )}
+
+      {pixel && (
+        <p className="floor-pixel-note">
+          8-bit mode: the scene is rendered at a fraction of its resolution with a quantised
+          palette, so the terminal screens are decorative — the live numbers are in the strip
+          above and in the panels below.
+        </p>
       )}
 
       <div className="floor-ticker" aria-label="Tape">

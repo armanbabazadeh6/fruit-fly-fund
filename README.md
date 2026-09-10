@@ -1,5 +1,15 @@
 # Fly vs. Fly
 
+[![CI](https://github.com/armanbabazadeh6/FruitFlyBrain/actions/workflows/ci.yml/badge.svg)](https://github.com/armanbabazadeh6/FruitFlyBrain/actions/workflows/ci.yml)
+[![Pages](https://github.com/armanbabazadeh6/FruitFlyBrain/actions/workflows/pages.yml/badge.svg)](https://armanbabazadeh6.github.io/FruitFlyBrain/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+[![Paper trading only](https://img.shields.io/badge/trading-paper%20only-ffb454.svg)](#what-is-and-is-not-claimed)
+
+**[Watch it run](https://armanbabazadeh6.github.io/FruitFlyBrain/)** — the browser
+experience replays recorded neural runs with no server and no dataset. The page opens on
+the two flies at their terminals, trading.
+
 Two fruit-fly neural simulations, one paper-trading account each, identical market and
 identical rules. **Gordon Flykko** applies Stonkfly's experimental memory updates.
 **Warren Buzzett** is the same simulation with those updates frozen. The question is
@@ -14,7 +24,10 @@ kernel. A fixed engineered decoder turns DNp20 firing into buy/sell/hold; the fl
 **Paper trading only.** No exchange account, no API key, no real order, no credential
 handling anywhere in this project.
 
-![Fly vs. Fly](docs/screenshot.png)
+![Two flies trading a season](docs/floor.gif)
+
+*Both flies working a recorded season. The terminals are driven by real telemetry: each desk
+reacts to its own fills, and every number on a screen comes from the recording.*
 
 ## First result, and how to read it
 
@@ -35,7 +48,14 @@ to a plain buy-and-hold, and fees plus the inability to short dominate everythin
 That is the honest state of it, and three seasons is far too few to conclude anything
 either way: reproduce it with `--repeats 6` and more bars before reading the mean.
 
-![The two flies at their trading floor](docs/screenshot-floor.png)
+![The trading floor](docs/screenshot-floor.png)
+
+A **3D / 8-bit** toggle switches the scene between the rendered floor and a pixel-art pass
+(289 distinct colours against 36,981, measured): the retro mode looks like the artwork that
+inspired the project, with the live numbers kept in crisp text above the canvas because
+pixelation makes the on-screen terminals decorative.
+
+![8-bit mode](docs/screenshot-8bit.png)
 
 ## What is and is not claimed
 

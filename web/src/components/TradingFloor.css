@@ -169,3 +169,27 @@
     margin-left: 0;
   }
 }
+
+.floor-mode {
+  cursor: pointer;
+  font-family: var(--font-num);
+  letter-spacing: 0.1em;
+}
+
+.floor-mode.is-on {
+  border-color: #5d4318;
+  background: var(--amber-dim);
+  color: var(--amber);
+}
+
+.floor-pixel-note {
+  margin: 0;
+  padding: 0.5rem 0.9rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.72rem;
+  color: var(--ink-4);
+}
+
+.floor-stage.is-pixel {
+  image-rendering: pixelated;
+}
