@@ -89,8 +89,27 @@ Trading more is not trading better: on the same season the busier preset went fr
 −0.604%, because every fill pays the fee. Measurements and the full lever list are in
 [activity](docs/activity.md).
 
+### The experiment
+
+Three protocols turn a comparison of two anecdotes into something that can be argued with:
+
+```sh
+scripts/experiment.sh          # train, fit a readout, exam, reset, readout exam
+```
+
+- **Exam** — learn on two real seasons, then freeze both brains and run a season neither has
+  seen. Nothing is learned during an exam, so the only variable is the brain each fly carried
+  in. This is the difference between homework and an exam.
+- **Reset** — the same exam with the trained fly's learned efficacies wiped back to the
+  reconstructed baseline, which makes a sharp prediction: a reset brain must be element-wise
+  identical to a never-trained one.
+- **A readout fitted from the fly** — instead of a threshold a human drew, a small logistic
+  model fitted on 256 cells of the fly's own spike counts, with a temporal split, reporting its
+  accuracy next to its base rate. A model no better than guessing is reported as exactly that.
+
 `docs/` has the rest: [model](docs/model.md), [fairness](docs/fairness.md),
-[telemetry](docs/telemetry.md), [hardware](docs/hardware.md), [activity](docs/activity.md).
+[telemetry](docs/telemetry.md), [hardware](docs/hardware.md), [activity](docs/activity.md),
+[experiments](docs/experiments.md).
 
 ## Run it
 

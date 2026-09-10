@@ -153,6 +153,26 @@ Four defects surfaced while verifying the 3D scene, all fixed:
 3. Vite silently dropped the harness page's script tag when the `rollupOptions.input` key
    matched the emitted chunk name. Renaming the key fixed it.
 
+### Exam, reset and the fitted readout
+
+Three protocols, all in `docs/experiments.md`:
+
+- **exam** (`--kind exam`) freezes both flies and gives one the weights it learned in an earlier
+  season, so the only variable is the brain it carried in. `run.kind` records this and the
+  fairness block switches from `differing_fields: ["learning"]` to `["starting_weights"]`.
+- **reset** (`--kind reset`) does the same and then wipes the learned KC→MBON efficacies back to
+  `baseline_plastic`. This predicts something checkable rather than something vague: a reset
+  brain must be element-wise identical to a never-trained one, and `tests/test_starting.py`
+  asserts it.
+- **a readout fitted from the fly** (`flyvsly fitreadout`) — 256 cells of the fly's own spike
+  counts, logistic regression with L2, numpy only, temporal split, fitted on the control arm,
+  shared by both flies at run time and never fitted online. `ReadoutPanel` shows its accuracy
+  beside its base rate and says "no better than guessing" when that is the truth.
+- `scripts/experiment.sh` runs the whole sequence and writes `results/report.md`.
+
+Population vectors joined the telemetry for this: every neural bar records the spike counts of
+the selected cells, so a readout can be fitted from a run that has already happened.
+
 ### Activity levers and the reinforcement controls
 
 The flies were quiet because of the gate, not the brain — see `docs/activity.md` for the
