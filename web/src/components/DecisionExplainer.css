@@ -266,9 +266,11 @@
 }
 
 .dx-rule {
-  display: flex;
+  /* A grid, not a flex row: a long label used to push its value out of the cell, out of
+     the panel, and on top of the neighbouring panel's text. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
-  justify-content: space-between;
   gap: 0.6rem;
   font-size: 0.74rem;
   border-bottom: 1px dotted var(--line);
@@ -277,13 +279,23 @@
 
 .dx-rule-key {
   color: var(--ink-3);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dx-rule-value {
   color: var(--ink-2);
+  text-align: right;
+}
+
+.dx-rule-grid {
+  min-width: 0;
 }
 
 .dx-fair {
+  overflow: hidden;
   padding: 0.65rem 0.9rem;
   border-top: 1px solid var(--line);
   background: var(--panel-2);

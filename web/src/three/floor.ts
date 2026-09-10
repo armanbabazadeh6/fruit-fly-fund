@@ -14,14 +14,15 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 
 import type { FlyMood } from '../lib/types'
 import {
-  buildBoard,
   buildCup,
   buildDesk,
   buildFly,
+  buildKeyboard,
   buildLamp,
   buildSteam,
   buildTerminal,
   type FlyParts,
+  type KeyboardParts,
   type TerminalParts,
 } from './models'
 
@@ -63,6 +64,7 @@ interface Station {
   desk: THREE.Group
   fly: FlyParts
   terminal: TerminalParts
+  keyboard: KeyboardParts
   cup: THREE.Group
   lamp: THREE.Group
   steam: THREE.Group
@@ -105,75 +107,6 @@ function gridTexture(): THREE.CanvasTexture {
   texture.repeat.set(9, 5)
   texture.anisotropy = 4
   return texture
-}
-
-/** The wall board: the market both flies are trading, and both equity curves. */
-function drawBoard(
-  board: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture },
-  state: FloorState,
-) {
-  const context = board.canvas.getContext('2d')
-  if (!context) return
-  const { width, height } = board.canvas
-  const mono = '13px ui-monospace, SFMono-Regular, Menlo, monospace'
-  context.fillStyle = '#05080c'
-  context.fillRect(0, 0, width, height)
-  context.strokeStyle = 'rgba(255, 180, 84, 0.25)'
-  context.lineWidth = 2
-  context.strokeRect(6, 6, width - 12, height - 12)
-
-  context.font = 'bold 17px ui-monospace, SFMono-Regular, Menlo, monospace'
-  context.fillStyle = '#ffb454'
-  context.fillText(state.product, 22, 34)
-  context.font = '13px ui-monospace, SFMono-Regular, Menlo, monospace'
-  context.fillStyle = '#8a9db2'
-  context.fillText(state.engine === 'neural' ? 'MALECNS v1.0 SIMULATION' : 'PROCEDURAL DEMO - NOT NEURAL', 132, 34)
-  context.fillStyle = '#dbe7f3'
-  context.fillText(`BAR ${state.bar + 1}/${state.bars}`, width - 150, 34)
-  context.fillStyle = '#ffb454'
-  context.fillText(state.mid.toFixed(2), width - 150, 58)
-  context.fillStyle = '#8a9db2'
-  context.fillText('MID', width - 218, 58)
-
-  const plot = { x: 22, y: 74, w: width - 190, h: height - 100 }
-  const all = state.arms.flatMap((arm) => arm.curve)
-  const low = Math.min(...all, state.initialCapital)
-  const high = Math.max(...all, state.initialCapital)
-  const span = high - low || 1
-  const xOf = (i: number, total: number) => plot.x + (i / Math.max(1, total - 1)) * plot.w
-  const yOf = (v: number) => plot.y + plot.h - ((v - low) / span) * plot.h
-
-  context.setLineDash([4, 4])
-  context.strokeStyle = 'rgba(160, 180, 205, 0.35)'
-  context.beginPath()
-  context.moveTo(plot.x, yOf(state.initialCapital))
-  context.lineTo(plot.x + plot.w, yOf(state.initialCapital))
-  context.stroke()
-  context.setLineDash([])
-
-  for (const arm of state.arms) {
-    if (arm.curve.length < 2) continue
-    context.strokeStyle = arm.accent
-    context.lineWidth = 2.4
-    context.beginPath()
-    arm.curve.forEach((value, i) =>
-      i ? context.lineTo(xOf(i, arm.curve.length), yOf(value)) : context.moveTo(xOf(i, arm.curve.length), yOf(value)),
-    )
-    context.stroke()
-  }
-
-  context.font = mono
-  state.arms.forEach((arm, index) => {
-    const y = 92 + index * 34
-    context.fillStyle = arm.accent
-    context.fillRect(width - 158, y - 10, 12, 4)
-    context.fillStyle = '#dbe7f3'
-    context.fillText(`${arm.returnPct >= 0 ? '+' : '−'}${Math.abs(arm.returnPct).toFixed(2)}%`, width - 138, y - 4)
-    context.fillStyle = '#8a9db2'
-    context.fillText(arm.learning ? 'MEMORY ON' : 'MEMORY OFF', width - 138, y + 14)
-  })
-
-  board.texture.needsUpdate = true
 }
 
 function drawTerminal(terminal: TerminalParts, arm: FloorArmState, state: FloorState, time: number) {
@@ -319,11 +252,11 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   // the lower middle of the frame (|x| ~ 0.48), both screens above them (|x| ~ 0.65), the
   // desks bleed off the bottom and outer edges, and nothing important is cropped. The
   // harness page (`/floor-check.html`) prints these numbers for anyone changing them.
-  const spread = options.spread ?? 3.5
+  const spread = options.spread ?? 3.34
   const cameraDistance = options.distance ?? 8.6
   const cameraHeight = options.height ?? 3.4
   const fov = options.fov ?? 34
-  const flyScale = options.flyScale ?? 0.82
+  const flyScale = options.flyScale ?? 0.86
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
   renderer.shadowMap.enabled = true
@@ -389,11 +322,6 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   floor.name = 'floor'
   scene.add(floor)
 
-  const board = buildBoard()
-  board.group.position.set(0, 2.58, -4.6)
-  board.group.name = 'board'
-  scene.add(board.group)
-
   const stations: Station[] = []
   const accents = ['#ffb454', '#5ec8ff']
 
@@ -413,8 +341,9 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
 
     const terminal = buildTerminal()
     terminal.group.name = 'terminal'
-    terminal.group.position.set(side * 0.5, 1.02, -0.62)
-    terminal.group.rotation.y = -side * 0.26
+    // Raised so the fly's head sits below the screen instead of covering it.
+    terminal.group.position.set(side * 0.42, 1.34, -0.78)
+    terminal.group.rotation.y = -side * 0.22
     terminal.group.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) child.castShadow = true
     })
@@ -423,8 +352,9 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     const fly = buildFly(accents[side < 0 ? 0 : 1])
     fly.root.name = 'fly'
     fly.root.scale.setScalar(flyScale)
-    // Feet on the desk surface (the desk top plane is at local y = 0.105).
-    fly.root.position.set(-side * 0.35, 0.12, 0.42)
+    // Feet on the desk surface (the desk top plane is at local y = 0.105), set back from
+    // the keyboard so the forelegs can reach the keys.
+    fly.root.position.set(-side * 0.3, 0.12, 0.34)
     // Facing inward: the two flies are rivals sharing a floor, and turning them away from
     // each other read as two unrelated desks.
     fly.root.rotation.y = -side * 0.62
@@ -445,9 +375,21 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     })
     station.add(lamp)
 
+    const keyboard = buildKeyboard()
+    keyboard.group.name = 'keyboard'
+    keyboard.group.position.set(-side * 0.06, 0.09, 0.92)
+    keyboard.group.rotation.y = -side * 0.3
+    keyboard.group.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.castShadow = true
+        child.receiveShadow = true
+      }
+    })
+    station.add(keyboard.group)
+
     const cup = buildCup()
     cup.name = 'cup'
-    cup.position.set(-side * 1.5, 0.07, 0.4)
+    cup.position.set(-side * 1.62, 0.07, 0.34)
     station.add(cup)
 
     const steam = buildSteam()
@@ -462,6 +404,7 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
       side,
       desk,
       fly,
+      keyboard,
       cup,
       lamp,
       terminal,
@@ -514,27 +457,53 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   const animateWings = (station: Station, dt: number) => {
     const mood = station.mood
     const busy = mood === 'buy' || mood === 'sell'
-    const speed = mood === 'halted' ? 0 : busy ? 34 : 6.4
-    const amplitude = mood === 'halted' ? 0 : busy ? 0.95 : 0.3
+    // The two flies used to flap at wildly different rates — one manic, one still — because
+    // an active bar ran at 34 rad/s against an idle 6.4. Both now buzz, with the difference
+    // legible but not a wind machine.
+    const speed = mood === 'halted' ? 0 : busy ? 19 : 8
+    const amplitude = mood === 'halted' ? 0 : busy ? 0.5 : 0.22
     clock += dt
     const t = clock * speed + station.flapPhase * 3.1
     const beat = Math.sin(t)
-    const lift = mood === 'veto' || mood === 'blocked' ? -0.32 : 0
-    station.fly.leftWing.rotation.z = -amplitude * beat + lift
-    station.fly.rightWing.rotation.z = amplitude * beat - lift
+    const tuck = mood === 'veto' || mood === 'blocked' ? -0.22 : 0
+    station.fly.leftWing.rotation.z = -amplitude * beat + tuck
+    station.fly.rightWing.rotation.z = amplitude * beat - tuck
     station.fly.rightWing.rotation.x = station.fly.leftWing.rotation.x = -0.05 + 0.07 * beat
 
-    const bob = mood === 'halted' ? 0 : Math.sin(clock * (busy ? 8 : 1.9) + station.flapPhase) * (busy ? 0.035 : 0.018)
-    station.fly.body.position.y = bob + (mood === 'halted' ? -0.12 : 0)
-    station.fly.body.rotation.z = mood === 'halted' ? station.side * 0.22 : Math.sin(clock * 1.3 + station.flapPhase) * 0.02
-    station.fly.body.rotation.x = busy ? Math.sin(clock * 16) * 0.05 : 0
-    const eyeGlow = mood === 'halted' ? 0.1 : busy ? 0.55 : 0.3
+    // Typing: the forelegs strike the keys in alternation, and the key under each arm lights
+    // as it lands. Always typing — they are supposed to be working.
+    const tapRate = mood === 'halted' ? 0 : busy ? 13 : 6.5
+    const tapPhase = clock * tapRate + station.flapPhase
+    station.fly.typingArms.forEach((arm, index) => {
+      const side = index === 0 ? -1 : 1
+      const strike = Math.max(0, Math.sin(tapPhase + index * Math.PI))
+      // Negative X swings the forelegs forward onto the deck (positive swung them back).
+      arm.rotation.x = -0.68 + strike * 0.16
+      arm.rotation.z = side * (0.16 - strike * 0.06)
+      const row = station.keyboard.caps[2]
+      const cap = row?.[index === 0 ? 4 : 9 + ((Math.floor(clock * tapRate) % 3) - 1)]
+      if (cap) {
+        const material = cap.material as THREE.MeshStandardMaterial
+        material.emissive = material.emissive ?? new THREE.Color()
+        material.emissive.setHex(0xffb454)
+        material.emissiveIntensity = station.mood === 'halted' ? 0 : strike * 0.9
+      }
+    })
+
+    const nod = Math.sin(clock * (busy ? 5 : 1.9) + station.flapPhase) * (busy ? 0.022 : 0.012)
+    const bob = mood === 'halted' ? 0 : nod
+    station.fly.body.position.y = bob + (mood === 'halted' ? -0.1 : 0)
+    // A working posture: leaning over the keyboard, with a small nod as it types.
+    station.fly.body.rotation.x = mood === 'halted' ? -0.12 : 0.13 + nod
+    station.fly.body.rotation.z =
+      mood === 'halted' ? station.side * 0.2 : Math.sin(clock * 1.3 + station.flapPhase) * 0.015
+    const eyeGlow = mood === 'halted' ? 0.1 : busy ? 0.5 : 0.28
     for (const eye of station.fly.eyes) {
       const material = eye.material as THREE.MeshStandardMaterial
       material.emissiveIntensity = eyeGlow
     }
     station.pulse = Math.max(0, station.pulse - dt * 1.6)
-    const activity = busy ? 1.15 : mood === 'veto' || mood === 'blocked' ? 0.8 : 0.45
+    const activity = busy ? 1.1 : mood === 'veto' || mood === 'blocked' ? 0.8 : 0.45
     station.glow.intensity = activity + station.pulse * 2.4
     station.terminal.glow.intensity = 0.5 + station.pulse * 1.6
     for (let i = 0; i < station.steam.children.length; i += 1) {
@@ -646,7 +615,6 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     container.dataset.floor = JSON.stringify({
       render: { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles },
       camera: camera.position.toArray().map((value) => Number(value.toFixed(2))),
-      board: { ...ndcBounds(board.group), visible: visibilityOf(board.screen) },
       stations: stations.map((station) => {
         const project = (object: THREE.Object3D) => {
           const vector = new THREE.Vector3()
@@ -661,13 +629,34 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
           screen: project(station.terminal.screen),
           wing: Number(station.fly.leftWing.rotation.z.toFixed(3)),
           flyNdc: ndcBounds(station.fly.root),
+          // Worst case for clipping: the widest the wings can sweep, measured by
+          // straightening them, so a frame mid-beat cannot quietly go off the edge.
+          flyNdcWorst: (() => {
+            const saved = [station.fly.leftWing.rotation.z, station.fly.rightWing.rotation.z]
+            station.fly.leftWing.rotation.z = 0
+            station.fly.rightWing.rotation.z = 0
+            const bounds = ndcBounds(station.fly.root)
+            station.fly.leftWing.rotation.z = saved[0]
+            station.fly.rightWing.rotation.z = saved[1]
+            return bounds
+          })(),
           deskNdc: ndcBounds(station.desk),
           lampNdc: ndcBounds(station.lamp),
           cupNdc: ndcBounds(station.cup),
           visible: {
             fly: visibilityOf(station.fly.root),
             screen: visibilityOf(station.terminal.screen),
+            keyboard: visibilityOf(station.keyboard.group),
           },
+          typing: station.fly.typingTips.map((tip) => {
+            const world = new THREE.Vector3()
+            tip.getWorldPosition(world)
+            const local = station.keyboard.group.worldToLocal(world.clone())
+            return {
+              local: [Number(local.x.toFixed(2)), Number(local.y.toFixed(2)), Number(local.z.toFixed(2))],
+              overKeys: Math.abs(local.x) < 1.02 && Math.abs(local.z) < 0.34,
+            }
+          }),
         }
       }),
     })
@@ -677,7 +666,6 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     update(next: FloorState) {
       const previous = state
       state = next
-      drawBoard(board, next)
       stations.forEach((station, index) => {
         const arm = next.arms[index]
         if (!arm) return

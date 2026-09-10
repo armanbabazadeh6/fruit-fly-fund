@@ -3,7 +3,8 @@
   grid-template-columns: auto 1fr auto;
   grid-template-areas:
     'brand badge controls'
-    'note note note';
+    'note note note'
+    'report report report';
   align-items: center;
   gap: 0.6rem 1.25rem;
   padding: 0.85rem 1.25rem;
@@ -43,6 +44,7 @@
 
 .source-badge {
   grid-area: badge;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 0.55rem;
@@ -99,6 +101,7 @@
 }
 
 .source-detail {
+  min-width: 0;
   color: var(--ink-2);
   white-space: nowrap;
   overflow: hidden;
@@ -187,7 +190,7 @@
 }
 
 .topbar-report {
-  grid-area: note;
+  grid-area: report;
   margin: 0;
   font-size: 0.75rem;
   color: var(--ink-2);
@@ -200,6 +203,6 @@
 @media (max-width: 1080px) {
   .topbar {
     grid-template-columns: 1fr;
-    grid-template-areas: 'brand' 'badge' 'controls' 'note';
+    grid-template-areas: 'brand' 'badge' 'controls' 'note' 'report';
   }
 }

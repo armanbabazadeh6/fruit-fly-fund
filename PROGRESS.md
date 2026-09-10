@@ -95,9 +95,25 @@ behind them showing the market and both equity curves. Built in `web/src/three/`
   framing controls (`?spread=&distance=&height=&fly=`) and prints what it drew, so camera
   changes are made from measurements rather than by eye.
 
-Cost: three.js is split into its own 124 KB (gzip) chunk, fetched only after WebGL is
-confirmed. The scene is 104 draw calls and ~11k triangles; it animates wings, posture,
-lamps, steam and pointer parallax, and stops entirely under `prefers-reduced-motion`.
+The fly carries the anatomy the connectome actually has: banded abdomen with ring segments,
+bristles placed from a deterministic hash, halteres behind the wings, tarsi on every leg,
+faceted compound eyes drawn to a canvas texture, and a shaded grey shell. Middle and hind
+legs rest on the desk; the forelegs are rigged as typing arms whose tarsi land on individual
+key caps, and the key under each arm lights as it strikes. `diagnostics()` reports each
+typing tip's position in keyboard space and whether it is over the keys, and bounds the
+widest wing sweep, so "typing" and "not clipped mid-beat" are measured rather than assumed.
+
+Wing rates were levelled: an active bar used to run at 34 rad/s against an idle 6.4, which
+made one fly look manic next to a still one. Both now buzz continuously (19 against 8) with
+smaller excursions, and the typing rate follows the same rule.
+
+The wall board was removed. It competed for the same vertical budget as the terminal, which
+is now 39% wider and 44% taller with a 768x448 screen texture, and its content duplicates
+the HTML ticker and charts below.
+
+Cost: three.js is split into its own 126 KB (gzip) chunk, fetched only after WebGL is
+confirmed. The scene is 298 draw calls and ~19.6k triangles; it animates wings, typing,
+posture, lamps, steam and pointer parallax, and stops entirely under `prefers-reduced-motion`.
 
 Framing was chosen from measured NDC footprints, since a headless check cannot look at the
 picture: with `spread=3.5, distance=8.6, height=3.4, flyScale=0.82` the flies are 0.53 NDC
@@ -114,7 +130,17 @@ reports which *named* object is hit first, so visibility is measured rather than
 you change the scene, check `visible.fly.hit === 'fly'` in the harness, not just the NDC
 bounds.
 
-Four defects surfaced while verifying it, all fixed:
+Layout defects found by an automated DOM overlap scan (pairs of text elements whose
+rectangles intersect), not by eye — 35 overlapping pairs, now zero:
+
+- `.dx-rule` was a flex row, so a long label pushed its value out of the cell, out of the
+  panel, and on top of the neighbouring panel's text. It is a grid with `minmax(0, 1fr)` now,
+  and the label ellipsises instead of overflowing.
+- `.topbar-report` and `.topbar-note` were both assigned `grid-area: note`, so the run
+  summary sat directly on top of the run note. They have separate rows.
+- `.source-detail` could not ellipsise without a shrinkable parent.
+
+Four defects surfaced while verifying the 3D scene, all fixed:
 
 0. The flies and desks were buried under the floor plane (above), and the wall board's top
    edge was clipped by the letterbox stage — the panel is now 640px tall and the board is

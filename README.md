@@ -100,8 +100,10 @@ and memory telemetry, full trade history, and a per-trade explanation of exactly
 measured signals and which programmed rule produced it.
 
 Every number on a terminal screen or the wall board comes from the recording on screen:
-there is no decorative data. The flies are procedural low-poly models built from primitives
-at load time (`web/src/three/models.ts`), so the repository ships no third-party art.
+there is no decorative data. The flies are procedural models built from primitives at load time
+(`web/src/three/models.ts`): banded abdomen, bristles, halteres, faceted compound eyes,
+translucent veined wings, and forelegs rigged to type on individual key caps — the key
+under each arm lights as it strikes. No third-party art is downloaded or bundled.
 three.js is loaded lazily and never downloaded by a browser without WebGL, which falls back
 to the 2D desk illustration instead.
 
