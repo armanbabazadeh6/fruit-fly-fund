@@ -153,6 +153,15 @@ Four defects surfaced while verifying the 3D scene, all fixed:
 3. Vite silently dropped the harness page's script tag when the `rollupOptions.input` key
    matched the emitted chunk name. Renaming the key fixed it.
 
+### Thermal reality on the laptop
+
+Measured, and worth planning around: bars start at 5.5-7 s on a cool M2 Air, degrade to 13-16 s
+after an hour of continuous load, and reached 25-35 s (once 82 s) after two hours with a browser
+rendering the 3D floor alongside. The engine is memory-bandwidth-bound, so concurrent runs slow
+each other well beyond the spare-core count. A twelve-run campaign that should take an hour took
+three. Anything longer than a two-season campaign belongs on the desktop; on the laptop, prefer
+many short seasons.
+
 ### Exam, reset and the fitted readout
 
 Three protocols, all in `docs/experiments.md`:

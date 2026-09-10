@@ -16,6 +16,27 @@ recorded `run.hardware` blocks in `runs/`.
 | 48-bar season, both flies, arms on two threads | ~5–11 min wall, `seconds_per_bar_mean` 5–17 s |
 | Procedural demo, 480 bars, both arms | under 5 s total |
 
+### Sustained load and heat (measured)
+
+A fanless M2 Air throttles hard over a long campaign, and it is worth planning around rather
+than discovering:
+
+| condition | seconds per bar |
+| --- | --- |
+| machine cool, nothing else running | 5.5–7 |
+| ~1 hour into continuous full-load work | 13–16 |
+| ~2 hours in, with a browser tab rendering the 3D floor | 25–35, with outliers at 82 |
+
+So a 48-bar season costs about 5 minutes on a cold machine and 12 minutes on a hot one, and a
+twelve-run campaign that should take an hour can take three. The engine is also
+memory-bandwidth-bound rather than core-bound: two concurrent runs slow each other by more than
+the spare cores would suggest, so run one at a time.
+
+Practical consequences: prefer many short seasons over one long one when iterating; let the
+machine idle between campaigns; and move anything longer than a two-season campaign to the
+desktop. Nothing here is a software defect — the same code runs at full speed on a cooled
+machine — but a fanless laptop is the wrong place for an overnight run.
+
 Memory is comfortably within 8 GB: the bind is **wall time**, not RAM. The engine is a
 single-threaded C loop per fly, and the two flies run on separate threads, so 8 cores give
 roughly a 2× speedup over sequential execution and nothing more.

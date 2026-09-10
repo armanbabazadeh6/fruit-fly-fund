@@ -459,6 +459,26 @@ def cmd_fitreadout(args):
     percentiles = {f"p{value}": round(float(np.percentile(scores, value)), 4) for value in (50, 60, 75, 90)}
     description["absolute_score_percentiles"] = percentiles
     description["suggested_margin"] = percentiles["p60"]
+
+    # A saturated fit is the normal failure mode here: 256 features against a few dozen bars
+    # will always separate the training set. Say so, because the metrics alone invite a reader
+    # to believe the holdout number.
+    train = description.get("train", {})
+    holdout = description.get("holdout", {})
+    warnings = []
+    if train.get("bars", 0) <= description.get("features", 0) * 2:
+        warnings.append(
+            f"only {train.get('bars')} training bars for {description.get('features')} "
+            "features: this fit is a demonstration of the pipeline, not a model to trust"
+        )
+    if train.get("accuracy", 0) >= 0.999:
+        warnings.append("training accuracy is 1.0, which means the model memorised the bars")
+    if holdout.get("bars", 0) < 30:
+        warnings.append(
+            f"the holdout is {holdout.get('bars')} bars, far too few to tell a signal from noise"
+        )
+    if warnings:
+        description["warnings"] = warnings
     print(json.dumps(description, indent=2))
     return 0
 
