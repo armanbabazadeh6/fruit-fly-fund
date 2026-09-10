@@ -1,0 +1,181 @@
+/* The readout panel. Accuracy is always drawn next to its base rate — two meters per split
+   — because a bare accuracy number is the easiest way to accidentally overstate a model. */
+
+.readout {
+  display: flex;
+  flex-direction: column;
+}
+
+.readout-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.readout-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.9rem 1.1rem 1rem;
+}
+
+.readout-empty {
+  margin: 0;
+  padding: 0.8rem 1.1rem 1rem;
+  font-size: 0.82rem;
+}
+
+.readout-body .readout-empty {
+  padding: 0;
+}
+
+.readout-claim {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.readout-provenance,
+.readout-caption {
+  margin: 0;
+  max-width: 82ch;
+  font-size: 0.78rem;
+}
+
+.readout-splits {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.readout-split {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  padding: 0.7rem 0.8rem;
+}
+
+.readout-split-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+.readout-bars {
+  font-size: 0.7rem;
+}
+
+.readout-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.readout-meter-row {
+  display: grid;
+  grid-template-columns: 5.2rem minmax(0, 1fr) 3.6rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.readout-meter-key {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+
+.readout-meter-track {
+  height: 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+
+/* Accuracy is cyan until it fails to clear the base rate, then amber: the warn colour is
+   the visual half of the "no better than guessing" verdict. */
+.readout-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--cyan);
+}
+
+.readout-meter-fill.is-base {
+  background: var(--line-2);
+}
+
+.readout-meter-fill.is-chance {
+  background: var(--amber);
+}
+
+.readout-meter-value {
+  font-size: 0.78rem;
+  text-align: right;
+  color: var(--ink-2);
+}
+
+.readout-verdict {
+  margin: 0.55rem 0 0;
+  font-size: 0.74rem;
+}
+
+.readout-features {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.readout-features-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.15rem;
+}
+
+.readout-feature {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr) 4.5rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.readout-feature-label {
+  font-size: 0.74rem;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.readout-feature-track {
+  height: 10px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+
+.readout-feature-bar {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan-dim), var(--cyan));
+}
+
+.readout-feature-weight {
+  font-size: 0.74rem;
+  text-align: right;
+  color: var(--ink-2);
+}
+
+@media (max-width: 760px) {
+  .readout-splits {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .readout-feature {
+    grid-template-columns: 7rem minmax(0, 1fr) 4rem;
+  }
+}

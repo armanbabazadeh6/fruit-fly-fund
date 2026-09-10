@@ -12,6 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ..population import extract
+
 
 def ensure_data_root(root: Path) -> Path:
     """Point the vendored engine at our data directory before it is imported.
@@ -33,7 +35,15 @@ def ensure_data_root(root: Path) -> Path:
 class NeuralBackend:
     engine = "neural"
 
-    def __init__(self, settings, data_root="data", require_gate=True):
+    def __init__(
+        self,
+        settings,
+        data_root="data",
+        require_gate=True,
+        population_sample=256,
+        readout=None,
+        readout_margin=0.15,
+    ):
         ensure_data_root(Path(data_root))
         from stonkfly.neural.common import annotations
         from stonkfly.neural.controller import FlyController
@@ -56,6 +66,24 @@ class NeuralBackend:
         )
         self.learning = bool(settings.learning)
         self.require_gate = bool(require_gate)
+
+        # Which cells the recorded population vector carries. Selected once, from the
+        # annotations, so every bar of every run describes the same cells in the same order.
+        from ..population import describe as describe_population
+        from ..population import select
+
+        self.population = select(brain, population_sample)
+        self.population_description = describe_population(self.population)
+
+        # A fitted readout replaces the fixed DNp20 rule. Both flies load the same model file:
+        # the model is shared, the brain it reads is not.
+        self.readout = None
+        if readout:
+            from ..readout import Readout
+
+            self.readout = Readout.load(readout)
+            self.readout_source = str(readout)
+        self.readout_margin = float(readout_margin)
         self.memory_rule = brain.rule_parameters
         self.plastic_edges = int(len(brain.circuit["edges"]))
 
@@ -72,6 +100,8 @@ class NeuralBackend:
             "model": brain.circuit["report"],
             "vision": brain.visual_report,
             "memory_rule": self.memory_rule,
+            "population": self.population_description,
+            "readout": self.readout.describe() if self.readout else None,
             "decoder_cells": self.controller.decoder.identities,
             "decoder": (
                 "DNp20 mean right-minus-left firing, engineered interface rather than a "
@@ -100,7 +130,8 @@ class NeuralBackend:
         """
         out = self.controller.observe(frame, reinforcement)
         memory = out["memory"]
-        return {
+        vector = extract(self.controller.brain.counts, self.population)
+        signal = {
             "signal_source": "neural",
             "label": self.label,
             "side": out["side"],
@@ -120,6 +151,7 @@ class NeuralBackend:
             "spike_sha256": out["spike_sha256"],
             "input_sha256": out["input_sha256"],
             "cell_ids": out["cell_ids"],
+            "population": vector,
             "memory": {
                 "enabled": self.learning,
                 "model": memory["model"],
@@ -130,6 +162,15 @@ class NeuralBackend:
                 "sha256": memory["sha256"],
             },
         }
+
+        if self.readout is not None:
+            # Keep upstream's readout of the same spikes: the audit trail should show what
+            # the fixed rule would have said alongside what the fitted model decided.
+            signal["decoder_side"] = out["side"]
+            signal["readout_score"] = self.readout.score(vector)
+            signal["readout_margin"] = self.readout_margin
+            signal["side"] = self.readout.decide(vector, self.readout_margin)
+        return signal
 
     def save(self, path):
         self.controller.save(path)

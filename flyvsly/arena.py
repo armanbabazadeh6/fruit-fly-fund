@@ -96,11 +96,48 @@ DISCLAIMERS = [
 ]
 
 
+def personas_for(kind: str) -> tuple:
+    """Who the two flies are in this kind of run.
+
+    A competition differs in `learning`; an exam or a reset freezes both and differs in the
+    brain each one carried in, so the role labels have to say that rather than claim one fly
+    is learning when it is not.
+    """
+    if kind == "competition":
+        return PERSONAS
+    trained = "trained brain, frozen" if kind == "exam" else "trained, then reset, frozen"
+    return (
+        {
+            **PERSONAS[0],
+            "role": "experimental",
+            "role_label": trained.capitalize(),
+            "tagline": "Brought weights from an earlier season.",
+            "detail": (
+                "Both flies run with their weight updates frozen: nothing is learned during "
+                "this run, so the only difference between the two is the brain each one "
+                "carried in."
+            ),
+        },
+        {
+            **PERSONAS[1],
+            "role": "control",
+            "role_label": "Fresh brain, frozen",
+            "tagline": "Never trained on anything.",
+            "detail": (
+                "Identical rules and identical frozen updates; its 7,835 eligible efficacies "
+                "are the reconstructed baseline."
+            ),
+        },
+    )
+
+
 class Arm:
     """One competitor: its own neural engine, its own account, its own ledger."""
 
-    def __init__(self, persona, rules, backend, out_dir, clock):
+    def __init__(self, persona, rules, backend, out_dir, clock, starting=None):
         self.persona = persona
+        self.starting = starting
+        self.starting_report = None
         self.id = persona["id"]
         self.name = persona["name"]
         self.learning = bool(persona["learning"])
@@ -136,6 +173,14 @@ class Arm:
         self.broker = PaperBroker(self.settings, self.ledger)
         return self
 
+    def apply_starting(self):
+        """Put this fly's brain where the experiment says it starts."""
+        if self.starting is None:
+            return
+        from .starting import apply as apply_starting
+
+        self.starting_report = apply_starting(self.starting, self.backend)
+
     def describe(self):
         backend = self.backend.describe()
         return {
@@ -149,6 +194,10 @@ class Arm:
             "detail": self.persona["detail"],
             "learning": self.learning,
             "starting_capital": str(self.initial),
+            "starting_weights": (
+                self.starting.describe() if self.starting is not None else None
+            ),
+            "starting_report": self.starting_report,
             "settings": dataclasses.asdict(self.settings),
             "settings_signature": self.settings.signature(),
             "backend": backend,
@@ -159,11 +208,18 @@ class Arm:
             self.ledger.close()
 
 
-def _build_backend(engine, settings, data_root, seed, require_gate=True):
+def _build_backend(engine, settings, data_root, seed, rules=None):
     if engine == "neural":
         from .backends.neural import NeuralBackend
 
-        return NeuralBackend(settings, data_root=data_root, require_gate=require_gate)
+        return NeuralBackend(
+            settings,
+            data_root=data_root,
+            require_gate=rules.require_gate if rules else True,
+            population_sample=rules.population_sample if rules else 256,
+            readout=rules.readout if rules else None,
+            readout_margin=rules.readout_margin if rules else 0.15,
+        )
     from .backends.procedural import ProceduralBackend
 
     return ProceduralBackend(settings, seed=seed)
@@ -220,7 +276,7 @@ class _ArmThread(threading.Thread):
                 settings,
                 self.arena.data_root,
                 self.arena.config.market.seed + self.index,
-                self.arena.rules.require_gate,
+                self.arena.rules,
             )
             self.arm_obj = Arm(
                 self.persona,
@@ -228,7 +284,9 @@ class _ArmThread(threading.Thread):
                 backend,
                 self.arena.out_dir,
                 VirtualClock(self.arena.season.timestamp(0)),
+                starting=self.arena.starting_for(self.persona["id"]),
             ).open_account()
+            self.arm_obj.apply_starting()
         except BaseException as error:
             self.error = error
             self.launched.set()
@@ -263,6 +321,15 @@ class Arena:
         self.rules = config.rules
         self.season = None
         self.out_dir = None
+        self.personas = personas_for(config.kind)
+
+    def starting_for(self, arm_id: str):
+        """Parse this arm's starting weights once, so every path uses the same object."""
+        from .starting import parse
+
+        if arm_id not in self.config.starting:
+            return None
+        return parse(self.config.starting[arm_id])
 
     def emit(self, kind, **payload):
         try:
@@ -282,8 +349,9 @@ class Arena:
         season = self.season
         self._prepare_reinforcement(season)
 
-        conditions = starting_conditions(rules)
-        assert_only_learning_differs(arm_settings(rules, True), arm_settings(rules, False))
+        conditions = starting_conditions(rules, config.kind, config.starting)
+        if config.kind == "competition":
+            assert_only_learning_differs(arm_settings(rules, True), arm_settings(rules, False))
 
         self.emit(
             "season_ready",
@@ -362,8 +430,19 @@ class Arena:
                 "bar_seconds": config.market.bar_seconds,
                 "season": season.describe(),
                 "rules": json.loads(json.dumps(dataclasses.asdict(rules), default=str)),
+                "kind": config.kind,
                 "reinforcement_mode": rules.reinforcement,
                 "rule_preset": config.preset,
+                "population": (
+                    arms[0].backend.population_description
+                    if hasattr(arms[0].backend, "population_description")
+                    else None
+                ),
+                "readout": (
+                    arms[0].backend.readout.describe()
+                    if getattr(arms[0].backend, "readout", None)
+                    else None
+                ),
                 "decoder_gate_required": rules.require_gate,
                 "starting_conditions": conditions,
                 "hardware": hardware_report(self.data_root),
@@ -394,6 +473,15 @@ class Arena:
             "summary": summary,
             "disclaimers": DISCLAIMERS,
         }
+        if config.save_brains:
+            from .starting import save_brains
+
+            recording["run"]["brains_saved"] = save_brains(
+                Path(config.save_brains),
+                {arm.id: arm.backend for arm in arms},
+            )
+            self.emit("brains_saved", **recording["run"]["brains_saved"])
+
         write_recording(out / "recording.json", recording)
         write_recording(
             out / "manifest.json",
@@ -416,14 +504,14 @@ class Arena:
     def _run_sequential(self, out):
         """Procedural arms are microseconds per bar; no threads, no surprises."""
         arms = []
-        for index, persona in enumerate(PERSONAS):
+        for index, persona in enumerate(self.personas):
             settings = arm_settings(self.rules, persona["learning"])
             backend = _build_backend(
                 self.config.engine,
                 settings,
                 self.data_root,
                 self.config.market.seed + index,
-                self.rules.require_gate,
+                self.rules,
             )
             arms.append(
                 Arm(
@@ -456,7 +544,7 @@ class Arena:
     def _run_parallel(self, run_id, season, out):
         """One thread per arm. Both arms receive the same frame object every bar."""
         threads = [
-            _ArmThread(self, persona, index) for index, persona in enumerate(PERSONAS)
+            _ArmThread(self, persona, index) for index, persona in enumerate(self.personas)
         ]
         for thread in threads:
             thread.start()

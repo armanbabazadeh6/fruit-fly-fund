@@ -20,7 +20,14 @@ import sys
 import time
 from pathlib import Path
 
-from .config import PRESETS, REINFORCEMENT_MODES, ArenaConfig, ArenaRules, MarketSpec
+from .config import (
+    PRESETS,
+    REINFORCEMENT_MODES,
+    RUN_KINDS,
+    ArenaConfig,
+    ArenaRules,
+    MarketSpec,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -43,7 +50,35 @@ def _rules(args) -> ArenaRules:
         paper_fee=args.paper_fee,
         decoder_threshold_hz=args.decoder_threshold_hz,
         neural_ms=args.neural_ms,
+        readout=args.readout,
+        readout_margin=args.readout_margin,
+        population_sample=args.population_sample,
     ).validate()
+
+
+def _starting(args) -> dict:
+    """Per-arm starting weights from `--starting arm=spec` pairs, validated up front.
+
+    Every spec is parsed here rather than when a brain is built, so a typo in a checkpoint
+    path fails immediately instead of after ten minutes of simulation — and instead of
+    silently running from the baseline on an engine that has no brain to load.
+    """
+    from .starting import parse
+
+    specs = {"gordon": "baseline", "warren": "baseline"}
+    for item in args.starting or []:
+        if "=" not in item:
+            raise SystemExit(f"--starting expects arm=spec, got {item!r}")
+        arm, spec = item.split("=", 1)
+        if arm not in specs:
+            raise SystemExit(f"--starting expects an arm name in {sorted(specs)}, got {arm!r}")
+        specs[arm] = spec
+    for arm, spec in specs.items():
+        try:
+            parse(spec)
+        except ValueError as error:
+            raise SystemExit(f"--starting {arm}: {error}") from None
+    return specs
 
 
 def _market(args, repeat: int) -> MarketSpec:
@@ -51,12 +86,13 @@ def _market(args, repeat: int) -> MarketSpec:
         return MarketSpec(kind="synthetic", product=args.products[0], bars=args.bars,
                           seed=args.seed + repeat * 7919, initial_price=args.initial_price)
     if args.start is None:
-        # Disjoint repeat seasons: step a whole season further back each time.
+        # Disjoint repeat seasons: step a whole season further back each time. An explicit
+        # window offset is how an exam is kept away from the season its brains trained on.
         return MarketSpec(
             kind="coinbase",
             product=args.products[0],
             bars=args.bars,
-            window_offset_bars=repeat * args.bars,
+            window_offset_bars=int(args.window_offset) + repeat * args.bars,
         )
     start = datetime.datetime.fromisoformat(args.start.replace("Z", "+00:00"))
     start = start + datetime.timedelta(seconds=args.bars * 60 * repeat)
@@ -204,7 +240,29 @@ def cmd_run(args):
     from .arena import Arena
     from .market import build_season
 
+    starting = _starting(args)
+    if args.engine != "neural" and (
+        args.kind != "competition" or any(spec != "baseline" for spec in starting.values())
+    ):
+        print(
+            "exam, reset and trained starting weights need the neural engine: the procedural "
+            "demo has no brain to carry anything between seasons.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.readout and args.engine != "neural":
+        print("a fitted readout decides from population vectors, which need the neural engine.", file=sys.stderr)
+        return 2
+    if args.kind != "competition" and all(spec == "baseline" for spec in starting.values()):
+        print(
+            f"A {args.kind} run needs trained weights: --starting gordon=trained:<checkpoint>",
+            file=sys.stderr,
+        )
+        return 2
     config = ArenaConfig(
+        kind=args.kind,
+        starting=starting,
+        save_brains=Path(args.save_brains) if args.save_brains else None,
         rules=_rules(args),
         market=_market(args, 0),
         engine=args.engine,
@@ -337,7 +395,68 @@ def cmd_publish(args):
     return 0
 
 
+def cmd_fitreadout(args):
+    """Fit a readout from recorded population vectors, on one arm's own brain activity.
+
+    The training data is real recordings, so this command only works after a run has stored
+    population vectors: `--population-sample` is on by default, so any neural run already has
+    them. The default arm is the control, because a readout fitted on the arm that is being
+    changed by the memory rule would be entangled with the thing under test.
+    """
+    from .readout import fit
+    from .report import load_manifests
+
+    manifests = [
+        manifest
+        for manifest in load_manifests(args.runs)
+        if manifest["run"].get("label") == args.label
+    ]
+    if not manifests:
+        print(f"no recordings labelled {args.label!r} under {args.runs}", file=sys.stderr)
+        return 2
+
+    vectors: list[list[int]] = []
+    closes: list[float] = []
+    used = []
+    for manifest in sorted(manifests, key=lambda m: m["run"].get("created", 0)):
+        recording = json.loads((Path(manifest["path"]) / "recording.json").read_text())
+        bars = recording["season"]["bars"]
+        season_vectors, season_closes = [], []
+        for observation in recording["observations"]:
+            signal = observation["arms"].get(args.arm, {}).get("signal")
+            if not signal or "population" not in signal:
+                continue
+            season_vectors.append(signal["population"])
+            season_closes.append(bars[observation["i"]]["mid"])
+        if len(season_vectors) <= args.horizon:
+            continue
+        # Drop each season's tail so no target reaches across into the next season: pairing
+        # the last bar of one season with the first close of another would be a fabricated
+        # sample, and exactly the kind of leak this experiment exists to avoid.
+        vectors.extend(season_vectors[: -args.horizon])
+        closes.extend(season_closes[: -args.horizon])
+        used.append({"run": recording["run"]["id"], "bars": len(season_vectors)})
+
+    if len(vectors) < args.minimum_bars:
+        print(
+            f"only {len(vectors)} usable bars for a readout (need {args.minimum_bars}); "
+            "run more seasons and try again",
+            file=sys.stderr,
+        )
+        return 2
+
+    model = fit(vectors, closes, horizon=args.horizon, trained_on=f"{args.label}:{args.arm}")
+    model.save(Path(args.out))
+    description = model.describe()
+    description["fitted_on"] = used
+    description["usable_bars"] = len(vectors)
+    print(json.dumps(description, indent=2))
+    return 0
+
+
 def cmd_list(args):
+
+
     from .report import load_manifests
 
     for manifest in load_manifests(args.runs):
@@ -419,6 +538,28 @@ def main(argv=None):
         help="upstream keeps Stonkfly's conservative caps; active is a busier paper-only rule set",
     )
     run.add_argument(
+        "--kind",
+        choices=RUN_KINDS,
+        default="competition",
+        help="competition: one fly learns. exam/reset: both frozen, the brain is the difference",
+    )
+    run.add_argument(
+        "--starting",
+        nargs="+",
+        default=None,
+        help="per-arm starting weights, e.g. --starting gordon=trained:runs/brains/train/gordon.npz",
+    )
+    run.add_argument("--save-brains", default=None, help="directory to checkpoint both brains into")
+    run.add_argument(
+        "--window-offset",
+        type=int,
+        default=0,
+        help="coinbase: how many bars further back the season starts (keeps an exam unseen)",
+    )
+    run.add_argument("--readout", default=None, help="fitted readout JSON to decide from")
+    run.add_argument("--readout-margin", type=float, default=0.15)
+    run.add_argument("--population-sample", type=int, default=256)
+    run.add_argument(
         "--reinforcement",
         choices=REINFORCEMENT_MODES,
         default="pnl",
@@ -447,6 +588,17 @@ def main(argv=None):
     serve.add_argument("--data", default="data")
     serve.add_argument("--no-open", action="store_true")
     serve.set_defaults(func=cmd_serve)
+
+    fitreadout = sub.add_parser(
+        "fitreadout", help="fit a readout model from recorded population vectors"
+    )
+    fitreadout.add_argument("--runs", default="runs")
+    fitreadout.add_argument("--label", required=True, help="label of the training recordings")
+    fitreadout.add_argument("--arm", default="warren", help="arm whose activity trains the model")
+    fitreadout.add_argument("--out", default="models/readout.json")
+    fitreadout.add_argument("--horizon", type=int, default=1, help="bars ahead to predict")
+    fitreadout.add_argument("--minimum-bars", type=int, default=120)
+    fitreadout.set_defaults(func=cmd_fitreadout)
 
     publish = sub.add_parser(
         "publish", help="copy recordings next to the web bundle for a static host"

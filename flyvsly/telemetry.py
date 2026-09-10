@@ -14,6 +14,14 @@ from decimal import Decimal
 
 SCHEMA = "flyvsly.recording/v1"
 
+READOUT_RULE = (
+    "Fitted readout. A logistic model, trained on this fly's own recorded population "
+    "vectors to predict the sign of the price change {horizon} bar(s) ahead, scores each "
+    "bar's vector. BUY at or above +{margin:.3f}, SELL at or below -{margin:.3f}, otherwise "
+    "HOLD. The same model file is applied to both flies; each fly supplies its own activity. "
+    "The model is used unchanged during the run: nothing is fitted online."
+)
+
 NEURAL_RULE = (
     "Fixed decoder. BUY requires mean(right DNp20) − mean(left DNp20) ≥ "
     "{threshold:+.2f} Hz and at least one DNpe017 spike. SELL requires the same "
@@ -26,8 +34,48 @@ PROCEDURAL_RULE = (
 )
 
 
+def readout_explanation(signal: dict) -> dict:
+    """Which fitted model scored which spikes, and what the fixed rule would have said."""
+    score = float(signal["readout_score"])
+    margin = float(signal.get("readout_margin", 0.15))
+    side = signal["side"]
+    fixed = signal.get("decoder_side")
+    steps = [
+        f"Population vector of {len(signal.get('population') or [])} cells taken from this "
+        "bar's spike counts",
+        f"Fitted readout score: {score:+.4f} against a margin of ±{margin:.3f}",
+        f"Score is {'at or above' if score >= margin else 'at or below' if score <= -margin else 'inside'} "
+        f"the margin, so the readout proposes {side}",
+    ]
+    if fixed is not None:
+        steps.append(
+            f"The fixed DNp20 rule reading the same spikes would have proposed {fixed} "
+            "(kept in the log as the audit trail, not used to trade)"
+        )
+    return {
+        "kind": "fitted-readout",
+        "rule": READOUT_RULE.format(horizon=signal.get("readout_horizon", 1), margin=margin),
+        "measured": {
+            "readout_score": score,
+            "readout_margin": margin,
+            "population_size": len(signal.get("population") or []),
+            "dnp20_difference_hz": float(signal["difference_hz"]),
+            "gate_spikes": int(signal["gate_spikes"]),
+        },
+        "steps": steps,
+        "result": side,
+        "engineered_interface": True,
+        "note": (
+            "The readout is a model of recorded brain activity, not of the market: it can "
+            "only be as informative as the fly's spikes are about the next price change."
+        ),
+    }
+
+
 def neural_explanation(signal: dict, threshold: float) -> dict:
     """Which measured spikes and which fixed rule produced this proposal."""
+    if signal.get("readout_score") is not None:
+        return readout_explanation(signal)
     left = float(signal["left_hz"])
     right = float(signal["right_hz"])
     difference = float(signal["difference_hz"])

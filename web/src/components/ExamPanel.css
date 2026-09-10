@@ -1,0 +1,199 @@
+/* Exam / reset runs. The layout stays a plain document — headline, one card per fly, the
+   paired difference, the audit trail — because the point is reading two frozen brains, not
+   watching a market. Arm colour arrives as `--accent` from the props, never hardcoded. */
+
+.exam {
+  display: flex;
+  flex-direction: column;
+}
+
+.exam-headline {
+  padding: 0.9rem 1.1rem 0;
+}
+
+.exam-headline h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.02rem;
+  line-height: 1.35;
+}
+
+.exam-headline p {
+  margin: 0;
+  max-width: 78ch;
+  color: var(--ink-2);
+  font-size: 0.86rem;
+}
+
+.exam-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+  padding: 1rem 1.1rem 0.4rem;
+}
+
+.exam-fly {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  padding: 0.75rem 0.85rem;
+}
+
+.exam-fly-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.exam-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.exam-fly-name {
+  font-weight: 600;
+}
+
+/* A checkpoint label can be a full path; clip it rather than pushing the card wide, and
+   let the title attribute carry the whole string. Inline-block makes the ellipsis work. */
+.exam-start {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-num);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.exam-start-trained {
+  border-color: #5d4318;
+  background: var(--amber-dim);
+  color: var(--amber);
+}
+
+.exam-start-reset {
+  border-color: #4a3a70;
+  background: var(--violet-dim);
+  color: var(--violet);
+}
+
+.exam-start-baseline {
+  color: var(--ink-3);
+}
+
+.exam-role {
+  margin: 0.25rem 0 0;
+  font-size: 0.74rem;
+}
+
+.exam-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.3rem 0.6rem;
+  margin: 0.6rem 0 0.55rem;
+}
+
+.exam-stats dt {
+  font-size: 0.64rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.exam-stats dd {
+  margin: 0.08rem 0 0;
+  font-size: 0.95rem;
+}
+
+.exam-nosummary {
+  margin: 0.6rem 0 0.55rem;
+  font-size: 0.78rem;
+}
+
+.exam-spark {
+  display: block;
+  width: 100%;
+  height: 38px;
+}
+
+.exam-spark-base {
+  stroke: var(--line-2);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.exam-spark-empty {
+  margin: 0;
+  font-size: 0.74rem;
+}
+
+.exam-spark-key {
+  margin: 0.1rem 1.1rem 0;
+  font-size: 0.68rem;
+  text-align: right;
+}
+
+.exam-compare {
+  margin: 0.6rem 1.1rem 0;
+  padding: 0.7rem 0 0.9rem;
+  border-top: 1px solid var(--line);
+}
+
+.exam-compare-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.exam-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.3rem 1rem;
+  margin: 0.55rem 0;
+}
+
+.exam-pair dt {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.exam-pair dd {
+  margin: 0.15rem 0 0;
+  font-size: 1.05rem;
+}
+
+.exam-meaning {
+  margin: 0.4rem 0 0.3rem;
+  max-width: 78ch;
+  font-size: 0.84rem;
+  color: var(--ink-2);
+}
+
+.exam-note {
+  margin: 0;
+  max-width: 78ch;
+  font-size: 0.78rem;
+}
+
+.exam-audit {
+  margin: 0 1.1rem 0.95rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-num);
+  font-size: 0.72rem;
+  word-break: break-all;
+}
+
+@media (max-width: 760px) {
+  .exam-grid,
+  .exam-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

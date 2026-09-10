@@ -11,8 +11,12 @@ from flyvsly.readout import SCHEMA, Readout, fit
 
 
 def _series(features, returns, start=100.0):
-    """Closes whose one-bar forward move is exactly `returns` (length == features)."""
-    return start + np.cumsum(returns)
+    """Closes whose one-bar forward move is exactly `returns` (length == features).
+
+    The leading `start` is prepended so `closes[i + 1] - closes[i] == returns[i]`; a plain
+    cumsum would shift every move one bar into the future.
+    """
+    return np.concatenate([[start], start + np.cumsum(returns[:-1])])
 
 
 def _planted(seed=0, bars=500, features=6):
