@@ -16,5 +16,10 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: false,
     chunkSizeWarningLimit: 900,
+    rollupOptions: {
+      // The floor harness is a second entry: it renders the 3D scene alone so it can be
+      // inspected (and verified) without the rest of the page.
+      input: { index: 'index.html', harness: 'floor-check.html' },
+    },
   },
 })

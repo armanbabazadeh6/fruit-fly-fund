@@ -1,7 +1,6 @@
 /** Which pose a fly is in, derived from its recorded telemetry and nothing else. */
 
-import type { FlyMood } from '../components/Fly'
-import type { ArmObservation } from './types'
+import type { ArmObservation, FlyMood } from './types'
 
 export function moodFor(observation: ArmObservation | null): FlyMood {
   if (!observation) return 'idle'

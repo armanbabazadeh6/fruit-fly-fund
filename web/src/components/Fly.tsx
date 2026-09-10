@@ -1,7 +1,7 @@
 import './Fly.css'
 
 /** Poses a fly can hold. The parent derives this from telemetry — the fly never infers it. */
-export type FlyMood = 'idle' | 'buy' | 'sell' | 'veto' | 'blocked' | 'halted'
+import type { FlyMood } from '../lib/types'
 
 interface FlyProps {
   accent: string

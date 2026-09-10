@@ -7,6 +7,9 @@
  */
 
 export type Side = 'BUY' | 'SELL' | 'HOLD' | 'BLOCKED'
+
+/** How a fly is posed, derived from its recorded telemetry (see `lib/mood.ts`). */
+export type FlyMood = 'idle' | 'buy' | 'sell' | 'veto' | 'blocked' | 'halted'
 export type SignalSource = 'neural' | 'procedural'
 export type StimulusKind = 'none' | 'reward' | 'aversive'
 export type ExecutionStatus = 'FILLED' | 'VETO' | 'HOLD' | 'BLOCKED'

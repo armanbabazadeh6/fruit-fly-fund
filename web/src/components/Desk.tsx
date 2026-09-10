@@ -1,7 +1,8 @@
 import { useId, type CSSProperties } from 'react'
 import type { ArmMeta, ArmObservation, ExecutionStatus, Side } from '../lib/types'
 import { signedPct, tone } from '../lib/format'
-import { Fly, type FlyMood } from './Fly'
+import type { FlyMood } from '../lib/types'
+import { Fly } from './Fly'
 import './Desk.css'
 
 interface DeskProps {

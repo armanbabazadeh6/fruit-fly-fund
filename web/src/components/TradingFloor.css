@@ -1,0 +1,170 @@
+.floor {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.floor-head-chips {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.floor-readouts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--line);
+}
+
+.floor-readout {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.8rem;
+  padding: 0.55rem 0.9rem;
+  border-left: 3px solid var(--accent, var(--line-2));
+  font-size: 0.78rem;
+}
+
+.floor-readout + .floor-readout {
+  border-left-width: 3px;
+}
+
+.floor-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent, var(--ink-3));
+  box-shadow: 0 0 10px var(--accent, transparent);
+}
+
+.floor-name {
+  font-weight: 650;
+  font-size: 0.92rem;
+}
+
+.floor-pair {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.floor-pair-label {
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.floor-return {
+  margin-left: auto;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.floor-minor {
+  flex-basis: 100%;
+  color: var(--ink-3);
+}
+
+.floor-stage {
+  position: relative;
+  height: 540px;
+  background: #070b11;
+}
+
+.floor-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.floor-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--ink-4);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.floor-fallback {
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.floor-fallback-note {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--ink-3);
+}
+
+.floor-fallback-desks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.9rem;
+}
+
+.floor-ticker {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.42rem 0.9rem;
+  border-top: 1px solid var(--line);
+  background: #0a0f16;
+  font-size: 0.72rem;
+}
+
+.floor-ticker-product {
+  color: var(--ink-2);
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.floor-ticker-mid {
+  color: var(--amber);
+}
+
+.floor-tape {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, black 6%, black 94%, transparent);
+}
+
+.floor-tape-track {
+  display: inline-flex;
+  gap: 2.2rem;
+  white-space: nowrap;
+  animation: tape 34s linear infinite;
+}
+
+.floor-tape-item {
+  color: var(--ink-3);
+}
+
+@keyframes tape {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (max-width: 1180px) {
+  .floor-readouts,
+  .floor-fallback-desks {
+    grid-template-columns: 1fr;
+  }
+  .floor-stage {
+    height: 420px;
+  }
+  .floor-return {
+    margin-left: 0;
+  }
+}

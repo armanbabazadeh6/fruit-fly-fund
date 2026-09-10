@@ -1,0 +1,712 @@
+/**
+ * The trading floor: two flies, two desks, two terminals, one market.
+ *
+ * three.js is imported by this module only. `TradingFloor.tsx` loads it with a dynamic
+ * import after checking for WebGL, because a browser without WebGL cannot use it and
+ * should not download it — the fallback there is the 2D desk illustration.
+ *
+ * Every number drawn on a terminal screen comes from the recording passed in through
+ * `update()`. Nothing on those screens is decorative.
+ */
+
+import * as THREE from 'three'
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
+
+import type { FlyMood } from '../lib/types'
+import {
+  buildBoard,
+  buildCup,
+  buildDesk,
+  buildFly,
+  buildLamp,
+  buildSteam,
+  buildTerminal,
+  type FlyParts,
+  type TerminalParts,
+} from './models'
+
+export interface FloorArmState {
+  id: string
+  name: string
+  roleLabel: string
+  accent: string
+  learning: boolean
+  mood: FlyMood
+  equity: number
+  returnPct: number
+  fills: number
+  vetoes: number
+  fees: string
+  curve: number[]
+  side: string
+  exec: string
+  reason: string
+  signalLine: string
+  memoryLine: string
+  neural: boolean
+  halted: boolean
+}
+
+export interface FloorState {
+  arms: FloorArmState[]
+  mid: number
+  bar: number
+  bars: number
+  product: string
+  engine: 'neural' | 'procedural'
+  live: boolean
+  initialCapital: number
+}
+
+interface Station {
+  side: number
+  desk: THREE.Group
+  fly: FlyParts
+  terminal: TerminalParts
+  cup: THREE.Group
+  lamp: THREE.Group
+  steam: THREE.Group
+  glow: THREE.PointLight
+  accent: THREE.Color
+  flapPhase: number
+  mood: FlyMood
+  pulse: number
+}
+
+export interface FloorHandle {
+  update(state: FloorState): void
+  setPaused(paused: boolean): void
+  diagnostics(): Record<string, unknown>
+  dispose(): void
+}
+
+
+function gridTexture(): THREE.CanvasTexture {
+  const size = 512
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const context = canvas.getContext('2d')!
+  context.fillStyle = '#0b1017'
+  context.fillRect(0, 0, size, size)
+  context.strokeStyle = 'rgba(90, 130, 175, 0.18)'
+  context.lineWidth = 2
+  for (let i = 0; i <= size; i += size / 8) {
+    context.beginPath()
+    context.moveTo(i, 0)
+    context.lineTo(i, size)
+    context.stroke()
+    context.beginPath()
+    context.moveTo(0, i)
+    context.lineTo(size, i)
+    context.stroke()
+  }
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping
+  texture.repeat.set(9, 5)
+  texture.anisotropy = 4
+  return texture
+}
+
+/** The wall board: the market both flies are trading, and both equity curves. */
+function drawBoard(
+  board: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture },
+  state: FloorState,
+) {
+  const context = board.canvas.getContext('2d')
+  if (!context) return
+  const { width, height } = board.canvas
+  const mono = '13px ui-monospace, SFMono-Regular, Menlo, monospace'
+  context.fillStyle = '#05080c'
+  context.fillRect(0, 0, width, height)
+  context.strokeStyle = 'rgba(255, 180, 84, 0.25)'
+  context.lineWidth = 2
+  context.strokeRect(6, 6, width - 12, height - 12)
+
+  context.font = 'bold 17px ui-monospace, SFMono-Regular, Menlo, monospace'
+  context.fillStyle = '#ffb454'
+  context.fillText(state.product, 22, 34)
+  context.font = '13px ui-monospace, SFMono-Regular, Menlo, monospace'
+  context.fillStyle = '#8a9db2'
+  context.fillText(state.engine === 'neural' ? 'MALECNS v1.0 SIMULATION' : 'PROCEDURAL DEMO - NOT NEURAL', 132, 34)
+  context.fillStyle = '#dbe7f3'
+  context.fillText(`BAR ${state.bar + 1}/${state.bars}`, width - 150, 34)
+  context.fillStyle = '#ffb454'
+  context.fillText(state.mid.toFixed(2), width - 150, 58)
+  context.fillStyle = '#8a9db2'
+  context.fillText('MID', width - 218, 58)
+
+  const plot = { x: 22, y: 74, w: width - 190, h: height - 100 }
+  const all = state.arms.flatMap((arm) => arm.curve)
+  const low = Math.min(...all, state.initialCapital)
+  const high = Math.max(...all, state.initialCapital)
+  const span = high - low || 1
+  const xOf = (i: number, total: number) => plot.x + (i / Math.max(1, total - 1)) * plot.w
+  const yOf = (v: number) => plot.y + plot.h - ((v - low) / span) * plot.h
+
+  context.setLineDash([4, 4])
+  context.strokeStyle = 'rgba(160, 180, 205, 0.35)'
+  context.beginPath()
+  context.moveTo(plot.x, yOf(state.initialCapital))
+  context.lineTo(plot.x + plot.w, yOf(state.initialCapital))
+  context.stroke()
+  context.setLineDash([])
+
+  for (const arm of state.arms) {
+    if (arm.curve.length < 2) continue
+    context.strokeStyle = arm.accent
+    context.lineWidth = 2.4
+    context.beginPath()
+    arm.curve.forEach((value, i) =>
+      i ? context.lineTo(xOf(i, arm.curve.length), yOf(value)) : context.moveTo(xOf(i, arm.curve.length), yOf(value)),
+    )
+    context.stroke()
+  }
+
+  context.font = mono
+  state.arms.forEach((arm, index) => {
+    const y = 92 + index * 34
+    context.fillStyle = arm.accent
+    context.fillRect(width - 158, y - 10, 12, 4)
+    context.fillStyle = '#dbe7f3'
+    context.fillText(`${arm.returnPct >= 0 ? '+' : '−'}${Math.abs(arm.returnPct).toFixed(2)}%`, width - 138, y - 4)
+    context.fillStyle = '#8a9db2'
+    context.fillText(arm.learning ? 'MEMORY ON' : 'MEMORY OFF', width - 138, y + 14)
+  })
+
+  board.texture.needsUpdate = true
+}
+
+function drawTerminal(terminal: TerminalParts, arm: FloorArmState, state: FloorState, time: number) {
+  const context = terminal.canvas.getContext('2d')
+  if (!context) return
+  const { width, height } = terminal.canvas
+  const accent = arm.accent
+  const amber = '#ffb454'
+  const dim = '#6b7f94'
+  const ink = '#dbe7f3'
+  const mono = '13px ui-monospace, SFMono-Regular, Menlo, monospace'
+
+  context.fillStyle = '#05080c'
+  context.fillRect(0, 0, width, height)
+
+  // Header
+  context.fillStyle = '#0e1620'
+  context.fillRect(0, 0, width, 34)
+  context.fillStyle = accent
+  context.fillRect(0, 0, 4, 34)
+  context.font = 'bold 16px ui-monospace, SFMono-Regular, Menlo, monospace'
+  context.fillStyle = accent
+  context.fillText(arm.name.toUpperCase(), 16, 23)
+  context.font = '12px ui-monospace, SFMono-Regular, Menlo, monospace'
+  context.fillStyle = dim
+  context.fillText(arm.roleLabel.toUpperCase(), 240, 23)
+  context.fillStyle = state.live ? '#5ad9a4' : dim
+  context.fillText(state.live ? 'LIVE' : 'RECORDED', width - 92, 23)
+
+  // Equity + return, the two numbers a desk always has in view
+  context.font = 'bold 30px ui-monospace, SFMono-Regular, Menlo, monospace'
+  context.fillStyle = ink
+  context.fillText(arm.equity.toFixed(2), 16, 74)
+  context.font = 'bold 15px ui-monospace, SFMono-Regular, Menlo, monospace'
+  context.fillStyle = arm.returnPct >= 0 ? '#5ad9a4' : '#ff6b81'
+  context.fillText(`${arm.returnPct >= 0 ? '+' : '−'}${Math.abs(arm.returnPct).toFixed(3)}%`, 132, 74)
+  context.font = mono
+  context.fillStyle = dim
+  context.fillText(`start ${state.initialCapital.toFixed(2)}`, 232, 73)
+
+  // Equity curve, scaled to its own range
+  const plot = { x: 16, y: 92, w: width - 32, h: 84 }
+  context.strokeStyle = 'rgba(120, 150, 185, 0.18)'
+  context.lineWidth = 1
+  context.strokeRect(plot.x, plot.y, plot.w, plot.h)
+  const values = arm.curve.length ? arm.curve : [state.initialCapital]
+  if (values.length > 1) {
+    const low = Math.min(...values, state.initialCapital)
+    const high = Math.max(...values, state.initialCapital)
+    const span = high - low || 1
+    const xOf = (i: number) => plot.x + (i / (values.length - 1)) * plot.w
+    const yOf = (v: number) => plot.y + plot.h - ((v - low) / span) * plot.h
+    context.setLineDash([3, 3])
+    context.strokeStyle = 'rgba(160, 180, 205, 0.4)'
+    context.beginPath()
+    context.moveTo(plot.x, yOf(state.initialCapital))
+    context.lineTo(plot.x + plot.w, yOf(state.initialCapital))
+    context.stroke()
+    context.setLineDash([])
+    context.strokeStyle = accent
+    context.lineWidth = 2
+    context.beginPath()
+    values.forEach((value, i) => (i ? context.lineTo(xOf(i), yOf(value)) : context.moveTo(xOf(i), yOf(value))))
+    context.stroke()
+    const last = values.length - 1
+    context.fillStyle = accent
+    context.beginPath()
+    context.arc(xOf(last), yOf(values[last]), 3, 0, Math.PI * 2)
+    context.fill()
+  } else {
+    context.fillStyle = dim
+    context.font = mono
+    context.fillText('waiting for the first bar', plot.x + 8, plot.y + plot.h / 2)
+  }
+
+  // Ledger rows
+  const rows: [string, string][] = [
+    ['SIDE', arm.side],
+    ['EXEC', arm.exec],
+    ['FILLS', String(arm.fills)],
+    ['VETOES', String(arm.vetoes)],
+    ['FEES', `${Number(arm.fees).toFixed(4)}`],
+    ['BAR', `${state.bar + 1}/${state.bars}`],
+    ['MID', state.mid.toFixed(2)],
+    [arm.neural ? 'SIGNAL' : 'SCORE', arm.signalLine],
+  ]
+  const top = plot.y + plot.h + 18
+  context.font = mono
+  rows.forEach(([label, value], index) => {
+    const column = index % 4
+    const row = Math.floor(index / 4)
+    const x = 16 + column * ((width - 32) / 4)
+    const y = top + row * 30
+    context.fillStyle = dim
+    context.fillText(label, x, y)
+    context.fillStyle =
+      label === 'SIDE' ? accent : label === 'EXEC' ? (value === 'FILLED' ? '#5ad9a4' : value === 'VETO' || value === 'BLOCKED' ? '#ff6b81' : ink) : ink
+    context.font = 'bold 14px ui-monospace, SFMono-Regular, Menlo, monospace'
+    context.fillText(value.slice(0, 16), x, y + 15)
+    context.font = mono
+  })
+
+  // Memory row: the experimental variable, stated on the desk itself
+  const memoryY = top + 74
+  context.fillStyle = '#0e1620'
+  context.fillRect(12, memoryY - 14, width - 24, 26)
+  context.fillStyle = arm.learning ? amber : dim
+  context.fillText(arm.learning ? 'MEMORY UPDATES ON' : 'MEMORY UPDATES OFF', 18, memoryY + 3)
+  context.fillStyle = ink
+  context.fillText(arm.memoryLine.slice(0, 40), 190, memoryY + 3)
+
+  // Footer: the reason this bar went the way it did
+  context.fillStyle = '#0b121a'
+  context.fillRect(0, height - 30, width, 30)
+  context.fillStyle = dim
+  context.fillText(arm.reason.slice(0, 86), 14, height - 10)
+  if (Math.sin(time * 3) > 0) {
+    context.fillStyle = accent
+    context.fillRect(width - 16, height - 21, 7, 12)
+  }
+
+  terminal.texture.needsUpdate = true
+}
+
+export interface FloorOptions {
+  /** Horizontal distance between the two stations. */
+  spread?: number
+  /** Camera distance and height; the pair sets how tightly the desks fill the frame. */
+  distance?: number
+  height?: number
+  fov?: number
+  /** Overall fly scale; the mascot should not dominate the desk it sits at. */
+  flyScale?: number
+}
+
+export function createFloor(container: HTMLElement, options: FloorOptions = {}): FloorHandle {
+  // Framing was chosen from measurements, not by eye: with these values both flies sit in
+  // the lower middle of the frame (|x| ~ 0.48), both screens above them (|x| ~ 0.65), the
+  // desks bleed off the bottom and outer edges, and nothing important is cropped. The
+  // harness page (`/floor-check.html`) prints these numbers for anyone changing them.
+  const spread = options.spread ?? 3.5
+  const cameraDistance = options.distance ?? 8.6
+  const cameraHeight = options.height ?? 3.4
+  const fov = options.fov ?? 34
+  const flyScale = options.flyScale ?? 0.72
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+  renderer.shadowMap.enabled = true
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  renderer.toneMapping = THREE.ACESFilmicToneMapping
+  renderer.toneMappingExposure = 1.08
+  renderer.outputColorSpace = THREE.SRGBColorSpace
+  renderer.domElement.style.display = 'block'
+  renderer.domElement.style.width = '100%'
+  renderer.domElement.style.height = '100%'
+  container.appendChild(renderer.domElement)
+
+  const scene = new THREE.Scene()
+  scene.background = new THREE.Color(0x070b11)
+  scene.fog = new THREE.Fog(0x070b11, 13, 30)
+
+  const pmrem = new THREE.PMREMGenerator(renderer)
+  const environment = pmrem.fromScene(new RoomEnvironment(), 0.05)
+  scene.environment = environment.texture
+  pmrem.dispose()
+
+  const camera = new THREE.PerspectiveCamera(fov, 2, 0.1, 100)
+  camera.position.set(0, cameraHeight, cameraDistance)
+  camera.lookAt(0, 0.75, 0)
+
+  scene.add(new THREE.HemisphereLight(0x9dc0ff, 0x0a0f16, 0.55))
+
+  const key = new THREE.DirectionalLight(0xfff0dc, 2.1)
+  key.position.set(4.5, 8.5, 6.5)
+  key.castShadow = true
+  key.shadow.mapSize.set(2048, 2048)
+  key.shadow.camera.near = 1
+  key.shadow.camera.far = 26
+  key.shadow.camera.left = -9
+  key.shadow.camera.right = 9
+  key.shadow.camera.top = 8
+  key.shadow.camera.bottom = -4
+  key.shadow.bias = -0.0016
+  key.shadow.normalBias = 0.02
+  scene.add(key)
+
+  const fill = new THREE.DirectionalLight(0x6f8fd0, 0.7)
+  fill.position.set(-6, 4, -4)
+  scene.add(fill)
+
+  const backdrop = new THREE.Mesh(
+    new THREE.PlaneGeometry(60, 26),
+    new THREE.MeshStandardMaterial({ color: 0x0a0f16, roughness: 1, metalness: 0 }),
+  )
+  backdrop.position.set(0, 6, -9)
+  scene.add(backdrop)
+
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(60, 34),
+    new THREE.MeshStandardMaterial({ map: gridTexture(), roughness: 0.9, metalness: 0.1 }),
+  )
+  floor.rotation.x = -Math.PI / 2
+  floor.receiveShadow = true
+  scene.add(floor)
+
+  const board = buildBoard()
+  board.group.position.set(0, 3.15, -5.4)
+  scene.add(board.group)
+
+  const stations: Station[] = []
+  const accents = ['#ffb454', '#5ec8ff']
+
+  for (const side of [-1, 1]) {
+    const station = new THREE.Group()
+    station.position.set(side * spread, -1.02, 0)
+    station.rotation.y = -side * 0.4
+    scene.add(station)
+
+    const desk = buildDesk()
+    desk.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) child.receiveShadow = true
+    })
+    station.add(desk)
+
+    const terminal = buildTerminal()
+    terminal.group.position.set(side * 0.5, 1.02, -0.62)
+    terminal.group.rotation.y = -side * 0.26
+    terminal.group.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) child.castShadow = true
+    })
+    station.add(terminal.group)
+
+    const fly = buildFly(accents[side < 0 ? 0 : 1])
+    fly.root.scale.setScalar(flyScale)
+    fly.root.position.set(-side * 0.35, 0.07, 0.42)
+    fly.root.rotation.y = side * 0.55
+    fly.body.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.castShadow = true
+        child.receiveShadow = true
+      }
+    })
+    station.add(fly.root)
+
+    const lamp = buildLamp(accents[side < 0 ? 0 : 1])
+    lamp.position.set(side * 1.55, 0.07, -0.3)
+    lamp.rotation.y = -side * 0.6
+    lamp.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) child.castShadow = true
+    })
+    station.add(lamp)
+
+    const cup = buildCup()
+    cup.position.set(-side * 1.5, 0.07, 0.4)
+    station.add(cup)
+
+    const steam = buildSteam()
+    steam.position.copy(cup.position)
+    station.add(steam)
+
+    const glow = new THREE.PointLight(new THREE.Color(accents[side < 0 ? 0 : 1]), 0.6, 4, 2)
+    glow.position.set(side * 0.5, 1.5, -0.1)
+    station.add(glow)
+
+    stations.push({
+      side,
+      desk,
+      fly,
+      cup,
+      lamp,
+      terminal,
+      steam,
+      glow,
+      accent: new THREE.Color(accents[side < 0 ? 0 : 1]),
+      flapPhase: side < 0 ? 0 : 1.7,
+      mood: 'idle',
+      pulse: 0,
+    })
+  }
+
+  let state: FloorState | null = null
+  // Must start below zero: `performance.now()` is small right after load, and a zero
+  // baseline would skip the first publish — which is the only one a paused recording gets.
+  let lastDiagnostics = -1e9
+  let width = container.clientWidth || 1200
+  let height = container.clientHeight || 520
+  let paused = false
+  let disposed = false
+  let frame = 0
+  let lastTime = performance.now()
+  let clock = 0
+  const pointer = { x: 0, y: 0 }
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+  const applySize = () => {
+    const nextWidth = Math.max(320, container.clientWidth || width)
+    const nextHeight = Math.max(240, container.clientHeight || height)
+    width = nextWidth
+    height = nextHeight
+    renderer.setSize(width, height, false)
+    camera.aspect = width / height
+    // Keep both desks in frame on wide and narrow layouts by pulling the camera back.
+    // Narrow viewports need a wider shot; ultrawide ones should not shrink the desks into
+    // the middle of the screen.
+    const fit = Math.max(0.86, Math.min(1.34, 1400 / width))
+    camera.position.set(0, cameraHeight * fit, cameraDistance * fit)
+    camera.lookAt(0, 0.75, 0)
+    camera.updateProjectionMatrix()
+  }
+
+  const onPointerMove = (event: PointerEvent) => {
+    const rect = renderer.domElement.getBoundingClientRect()
+    pointer.x = ((event.clientX - rect.left) / rect.width - 0.5) * 2
+    pointer.y = ((event.clientY - rect.top) / rect.height - 0.5) * 2
+  }
+  if (!reduced) window.addEventListener('pointermove', onPointerMove)
+
+  const animateWings = (station: Station, dt: number) => {
+    const mood = station.mood
+    const busy = mood === 'buy' || mood === 'sell'
+    const speed = mood === 'halted' ? 0 : busy ? 34 : 6.4
+    const amplitude = mood === 'halted' ? 0 : busy ? 0.95 : 0.3
+    clock += dt
+    const t = clock * speed + station.flapPhase * 3.1
+    const beat = Math.sin(t)
+    const lift = mood === 'veto' || mood === 'blocked' ? -0.32 : 0
+    station.fly.leftWing.rotation.z = -amplitude * beat + lift
+    station.fly.rightWing.rotation.z = amplitude * beat - lift
+    station.fly.rightWing.rotation.x = station.fly.leftWing.rotation.x = -0.05 + 0.07 * beat
+
+    const bob = mood === 'halted' ? 0 : Math.sin(clock * (busy ? 8 : 1.9) + station.flapPhase) * (busy ? 0.035 : 0.018)
+    station.fly.body.position.y = bob + (mood === 'halted' ? -0.12 : 0)
+    station.fly.body.rotation.z = mood === 'halted' ? station.side * 0.22 : Math.sin(clock * 1.3 + station.flapPhase) * 0.02
+    station.fly.body.rotation.x = busy ? Math.sin(clock * 16) * 0.05 : 0
+    const eyeGlow = mood === 'halted' ? 0.1 : busy ? 0.55 : 0.3
+    for (const eye of station.fly.eyes) {
+      const material = eye.material as THREE.MeshStandardMaterial
+      material.emissiveIntensity = eyeGlow
+    }
+    station.pulse = Math.max(0, station.pulse - dt * 1.6)
+    const activity = busy ? 1.15 : mood === 'veto' || mood === 'blocked' ? 0.8 : 0.45
+    station.glow.intensity = activity + station.pulse * 2.4
+    station.terminal.glow.intensity = 0.5 + station.pulse * 1.6
+    for (let i = 0; i < station.steam.children.length; i += 1) {
+      const wisp = station.steam.children[i]
+      const phase = (clock * 0.32 + i * 0.33) % 1
+      wisp.position.y = 0.28 + phase * 0.62 + i * 0.05
+      wisp.position.x = Math.sin((phase + i) * 3.4) * 0.05
+      const material = (wisp as THREE.Mesh).material as THREE.MeshBasicMaterial
+      material.opacity = 0.16 * Math.sin(phase * Math.PI)
+    }
+    if (mood === 'halted') {
+      for (const eye of station.fly.eyes) (eye.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.06
+    }
+  }
+
+  const renderFrame = (dt: number) => {
+    for (const station of stations) animateWings(station, dt)
+    if (!reduced) {
+      const fit = Math.max(0.86, Math.min(1.34, 1400 / width))
+      camera.position.x += (pointer.x * 0.55 - camera.position.x) * 0.045
+      camera.position.y += (cameraHeight * fit + pointer.y * -0.28 - camera.position.y) * 0.045
+      camera.lookAt(0, 0.75, 0)
+    }
+    renderer.render(scene, camera)
+  }
+
+  const loop = () => {
+    if (disposed) return
+    frame = requestAnimationFrame(loop)
+    const now = performance.now()
+    const dt = Math.min(0.05, (now - lastTime) / 1000)
+    lastTime = now
+    if (paused) return
+    renderFrame(dt)
+  }
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      const visible = entries.some((entry) => entry.isIntersecting)
+      if (visible === paused) {
+        paused = !visible
+        lastTime = performance.now()
+      }
+    },
+    { threshold: 0.02 },
+  )
+  observer.observe(container)
+
+  const onVisibility = () => {
+    paused = document.hidden || paused
+    lastTime = performance.now()
+  }
+  document.addEventListener('visibilitychange', onVisibility)
+  // The container is the source of truth for size: it changes with the layout, not only
+  // with the window.
+  const resizeObserver = new ResizeObserver(applySize)
+  resizeObserver.observe(container)
+  applySize()
+  lastTime = performance.now()
+  frame = requestAnimationFrame(loop)
+
+  const ndcBounds = (object: THREE.Object3D) => {
+    const box = new THREE.Box3().setFromObject(object)
+    const projected: [number, number][] = []
+    for (const x of [box.min.x, box.max.x]) {
+      for (const y of [box.min.y, box.max.y]) {
+        for (const z of [box.min.z, box.max.z]) {
+          const ndc = new THREE.Vector3(x, y, z).project(camera)
+          projected.push([ndc.x, ndc.y])
+        }
+      }
+    }
+    const round = (value: number) => Number(value.toFixed(3))
+    return {
+      minX: round(Math.min(...projected.map((p) => p[0]))),
+      maxX: round(Math.max(...projected.map((p) => p[0]))),
+      minY: round(Math.min(...projected.map((p) => p[1]))),
+      maxY: round(Math.max(...projected.map((p) => p[1]))),
+    }
+  }
+
+  const publishDiagnostics = () => {
+    container.dataset.floor = JSON.stringify({
+      render: { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles },
+      camera: camera.position.toArray().map((value) => Number(value.toFixed(2))),
+      stations: stations.map((station) => {
+        const project = (object: THREE.Object3D) => {
+          const vector = new THREE.Vector3()
+          object.getWorldPosition(vector)
+          const ndc = vector.project(camera)
+          return [Number(ndc.x.toFixed(3)), Number(ndc.y.toFixed(3))]
+        }
+        return {
+          side: station.side,
+          mood: station.mood,
+          fly: project(station.fly.body),
+          screen: project(station.terminal.screen),
+          wing: Number(station.fly.leftWing.rotation.z.toFixed(3)),
+          flyNdc: ndcBounds(station.fly.root),
+          deskNdc: ndcBounds(station.desk),
+          lampNdc: ndcBounds(station.lamp),
+          cupNdc: ndcBounds(station.cup),
+        }
+      }),
+    })
+  }
+
+  return {
+    update(next: FloorState) {
+      const previous = state
+      state = next
+      drawBoard(board, next)
+      stations.forEach((station, index) => {
+        const arm = next.arms[index]
+        if (!arm) return
+        const changed = !previous || previous.arms[index].side !== arm.side || previous.bar !== next.bar
+        station.mood = arm.mood
+        if (changed && (arm.mood === 'buy' || arm.mood === 'sell' || arm.mood === 'veto')) {
+          station.pulse = 1
+        }
+        drawTerminal(station.terminal, arm, next, clock)
+      })
+      // New state always draws a frame here rather than waiting for the animation loop.
+      // The loop is paused while the floor is off-screen or the tab is hidden, and the
+      // browser throttles animation frames in background tabs — either way a changed bar
+      // has to reach the screen immediately instead of showing stale terminal contents.
+      renderFrame(0)
+      const now = performance.now()
+      if (now - lastDiagnostics > 500) {
+        lastDiagnostics = now
+        publishDiagnostics()
+      }
+    },
+    setPaused(next: boolean) {
+      paused = next
+      lastTime = performance.now()
+    },
+    diagnostics() {
+      const project = (object: THREE.Object3D) => {
+        const vector = new THREE.Vector3()
+        object.getWorldPosition(vector)
+        const ndc = vector.clone().project(camera)
+        return { x: Number(ndc.x.toFixed(3)), y: Number(ndc.y.toFixed(3)), z: Number(ndc.z.toFixed(3)) }
+      }
+      let triangles = 0
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh
+        if (mesh.isMesh && mesh.geometry) {
+          const geometry = mesh.geometry as THREE.BufferGeometry
+          triangles += geometry.index ? geometry.index.count / 3 : (geometry.attributes.position?.count ?? 0) / 3
+        }
+      })
+      return {
+        stations: stations.map((station) => ({
+          side: station.side,
+          fly: project(station.fly.body),
+          screen: project(station.terminal.screen),
+          wings: [
+            Number(station.fly.leftWing.rotation.z.toFixed(3)),
+            Number(station.fly.rightWing.rotation.z.toFixed(3)),
+          ],
+          mood: station.mood,
+        })),
+        camera: camera.position.toArray().map((v) => Number(v.toFixed(2))),
+        canvas: [renderer.domElement.width, renderer.domElement.height],
+        triangles: Math.round(triangles),
+        render: { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles },
+        paused,
+        reducedMotion: reduced,
+      }
+    },
+    dispose() {
+      disposed = true
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+      resizeObserver.disconnect()
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pointermove', onPointerMove)
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh
+        if (!mesh.isMesh) return
+        mesh.geometry?.dispose()
+        const material = mesh.material as THREE.Material | THREE.Material[]
+        for (const entry of Array.isArray(material) ? material : [material]) {
+          const mapped = entry as THREE.MeshStandardMaterial
+          mapped.map?.dispose()
+          entry.dispose()
+        }
+      })
+      environment.texture.dispose()
+      renderer.dispose()
+      renderer.domElement.remove()
+    },
+  }
+}

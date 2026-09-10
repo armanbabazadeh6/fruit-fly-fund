@@ -35,7 +35,7 @@ to a plain buy-and-hold, and fees plus the inability to short dominate everythin
 That is the honest state of it, and three seasons is far too few to conclude anything
 either way: reproduce it with `--repeats 6` and more bars before reading the mean.
 
-![The two flies at their desks](docs/screenshot-desks.png)
+![The two flies at their trading floor](docs/screenshot-floor.png)
 
 ## What is and is not claimed
 
@@ -93,10 +93,20 @@ flyvsly serve                # http://127.0.0.1:7777
 Server-Sent Events, and can start runs from the UI. The badge in the header always says
 which data is on screen: a live neural run, a recorded neural run, or the procedural demo.
 
-The page shows two animated flies at their desks, a live scoreboard, equity and price
-charts with a buy-and-hold and cash benchmark, per-bar spike and memory telemetry, full
-trade history, and a per-trade explanation of exactly which measured signals and which
-programmed rule produced it.
+The page shows a 3D trading floor — two modeled flies at their desks in front of amber
+terminals, under a wall board showing the market and both equity curves — plus a live
+scoreboard, equity and price charts with a buy-and-hold and cash benchmark, per-bar spike
+and memory telemetry, full trade history, and a per-trade explanation of exactly which
+measured signals and which programmed rule produced it.
+
+Every number on a terminal screen or the wall board comes from the recording on screen:
+there is no decorative data. The flies are procedural low-poly models built from primitives
+at load time (`web/src/three/models.ts`), so the repository ships no third-party art.
+three.js is loaded lazily and never downloaded by a browser without WebGL, which falls back
+to the 2D desk illustration instead.
+
+`/floor-check.html` renders the 3D scene by itself, with framing controls and a diagnostic
+readout — useful for changing the camera without guessing.
 
 ## Cost, measured
 

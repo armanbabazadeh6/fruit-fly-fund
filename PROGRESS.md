@@ -78,6 +78,42 @@ seasons, and the paired difference is smaller than its own spread. Archived as r
 
 See `docs/hardware.md`.
 
+### 3D trading floor
+
+Two modeled flies at their desks, each in front of an amber terminal, with a wall board
+behind them showing the market and both equity curves. Built in `web/src/three/`:
+
+- `models.ts` — procedural low-poly fly (thorax, abdomen, head, compound eyes, antennae,
+  six two-segment legs, veined translucent wings), desk, terminal with a canvas-texture
+  screen, lamp with a real spotlight, mug, and steam. No downloaded assets.
+- `floor.ts` — scene, camera, lighting (RoomEnvironment IBL, shadow-casting key light,
+  per-station lamp spot and monitor glow), the render loop, and the terminal/wall-board
+  painters. The floor pauses while off-screen and draws one frame on every state update.
+- `TradingFloor.tsx` — React wrapper: WebGL detection, lazy `import()` of three.js, the
+  per-fly readout strip, an HTML ticker tape, and the 2D desk fallback when WebGL is absent.
+- `floor-check.html` + `src/floor-check.ts` — a harness that renders the scene alone with
+  framing controls (`?spread=&distance=&height=&fly=`) and prints what it drew, so camera
+  changes are made from measurements rather than by eye.
+
+Cost: three.js is split into its own 124 KB (gzip) chunk, fetched only after WebGL is
+confirmed. The scene is 104 draw calls and ~11k triangles; it animates wings, posture,
+lamps, steam and pointer parallax, and stops entirely under `prefers-reduced-motion`.
+
+Framing was chosen from measured NDC footprints, since a headless check cannot look at the
+picture: with `spread=3.5, distance=8.6, height=3.4, flyScale=0.72` the flies sit at
+|x| ≈ 0.41, their screens at |x| ≈ 0.56, lamps and mugs stay inside |x| < 0.9, and the desk
+fronts bleed off the bottom edge on purpose. The rendered stage measures mean luminance 59
+with 20k distinct colours — lit, contrasted, and not crushed to black.
+
+Three defects surfaced while verifying it, all fixed:
+
+1. The diagnostics publish compared `performance.now()` against a zero baseline, so the
+   first (and for a paused recording, only) update never published.
+2. A paused or off-screen floor never redrew when new state arrived, so scrolling back
+   showed stale terminal contents. `update()` now always draws a frame.
+3. Vite silently dropped the harness page's script tag when the `rollupOptions.input` key
+   matched the emitted chunk name. Renaming the key fixed it.
+
 ### Live streaming, verified end to end
 
 `flyvsly serve` runs the arena in a thread and streams it over Server-Sent Events. A page
@@ -134,7 +170,6 @@ Loaded the built bundle against `flyvsly serve` and against a plain static serve
    the existing arena: `MemoryBrain.checkpoint`/`restore`/`reset` already support it.
 5. **Aggregate the report into the UI.** `flyvsly report` output exists and the header shows
    a one-line summary, but the per-season paired spread deserves its own chart.
-6. **Screenshot** at `docs/screenshot.png`, referenced from the README.
 7. **Longer Coinbase history.** The public endpoint here serves a fixed recent window;
    `--start` accepts any ISO window the exchange still has, which is how to reach further
    back for more independent seasons.

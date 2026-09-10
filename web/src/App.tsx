@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Commentary } from './components/Commentary'
 import { DecisionExplainer } from './components/DecisionExplainer'
-import { Desk } from './components/Desk'
 import { EquityChart } from './components/EquityChart'
 import { PriceChart } from './components/PriceChart'
 import { Provenance } from './components/Provenance'
@@ -9,6 +8,7 @@ import { Scoreboard } from './components/Scoreboard'
 import { TelemetryPanel } from './components/TelemetryPanel'
 import { TopBar } from './components/TopBar'
 import { TradeHistory } from './components/TradeHistory'
+import { TradingFloor } from './components/TradingFloor'
 import { Transport } from './components/Transport'
 import {
   loadCatalog,
@@ -20,7 +20,6 @@ import {
   type Catalog,
 } from './lib/data'
 import { asRecording, type LiveRun } from './lib/live'
-import { isFlapping, moodFor } from './lib/mood'
 import type { Observation, Recording, ReportGroup, Source } from './lib/types'
 import './App.css'
 
@@ -421,23 +420,17 @@ export default function App() {
           visibleBars={clampedIndex + 1}
         />
 
-        <section className="desks-row">
-          {[onArm, offArm].map((arm) => {
-            const observation = observations[clampedIndex]?.arms?.[arm.id] ?? null
-            const mood = moodFor(observation)
-            return (
-              <Desk
-                key={arm.id}
-                arm={arm}
-                observation={observation}
-                mood={mood}
-                curve={summaries[arm.id]?.curve ?? []}
-                curveIndex={clampedIndex}
-                live={Boolean(live) && isFlapping(mood)}
-              />
-            )
-          })}
-        </section>
+        <TradingFloor
+          arms={arms}
+          summaries={summaries}
+          observations={observations}
+          seasonBars={shown.season.bars}
+          index={clampedIndex}
+          engine={shown.run.engine}
+          live={Boolean(live) && !live?.finished}
+          initialCapital={initialCapital}
+          product={observations[0]?.product ?? 'BTC-USDC'}
+        />
 
         <section className="explain-row">
           {[onArm, offArm].map((arm) => (
