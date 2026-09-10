@@ -32,9 +32,14 @@ REINFORCEMENT_MODES = ("pnl", "decoy", "shuffled", "none")
 # min(capital, 10) and capital against 100, and this project does not patch vendored code. So
 # activity comes from the two levers that are ours — the gate, and the daily order limit
 # (upstream allows up to 100) — plus running more bars.
+# Over a long season the binding constraint stops being the gate and becomes the wallet:
+# with $10 orders on $100 of capital, a fly is fully invested after about nine fills and every
+# later BUY is vetoed for funds. `scalper` takes the other end of what upstream's validation
+# permits — many small orders — which is how a 48-bar season can fill on nearly every bar.
 PRESETS = {
     "upstream": {"order_limit": "10", "daily_orders": 24, "require_gate": True},
     "active": {"order_limit": "10", "daily_orders": 100, "require_gate": False},
+    "scalper": {"order_limit": "2", "daily_orders": 100, "require_gate": False},
 }
 
 

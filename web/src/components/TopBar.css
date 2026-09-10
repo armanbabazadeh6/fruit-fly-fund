@@ -206,3 +206,27 @@
     grid-template-areas: 'brand' 'badge' 'controls' 'note' 'report';
   }
 }
+
+.topbar-progress {
+  grid-area: report;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-size: 0.74rem;
+  color: var(--ink-2);
+}
+
+.topbar-progress-track {
+  flex: 1;
+  height: 5px;
+  border-radius: 4px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+
+.topbar-progress-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--amber), var(--cyan));
+  transition: width 300ms ease;
+}

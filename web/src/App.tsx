@@ -5,6 +5,7 @@ import { EquityChart } from './components/EquityChart'
 import { PriceChart } from './components/PriceChart'
 import { Provenance } from './components/Provenance'
 import { Scoreboard } from './components/Scoreboard'
+import { SeasonLibrary } from './components/SeasonLibrary'
 import { TelemetryPanel } from './components/TelemetryPanel'
 import { TopBar } from './components/TopBar'
 import { TradeHistory } from './components/TradeHistory'
@@ -145,6 +146,7 @@ export default function App() {
           seasonBars: [],
           arms: [],
           observations: [],
+          barSeconds: [],
           bars: Number(payload.bars ?? 0),
           repeat: Number(payload.repeat ?? 0),
           repeats: Number(payload.repeats ?? 1),
@@ -209,6 +211,7 @@ export default function App() {
           ...current,
           bars: Number(payload.bars ?? current.bars),
           observations,
+          barSeconds: [...current.barSeconds, Number(payload.elapsed ?? 0)].slice(-12),
         }
         liveRef.current = next
         setLive(next)
@@ -339,6 +342,20 @@ export default function App() {
   return (
     <div className="app">
       <TopBar
+        progress={
+          running && live && live.bars > 0
+            ? {
+                done: live.observations.length,
+                total: live.bars,
+                etaSeconds:
+                  live.barSeconds.length > 0
+                    ? ((live.bars - live.observations.length) *
+                        live.barSeconds.reduce((sum, value) => sum + value, 0)) /
+                      live.barSeconds.length
+                    : null,
+              }
+            : null
+        }
         source={source}
         listings={catalog?.listings ?? []}
         activeId={recording?.run.id ?? null}
@@ -478,6 +495,13 @@ export default function App() {
           selectedIndex={clampedIndex}
           onSelectBar={setIndex}
           firstBarT={firstBarT}
+        />
+
+        <SeasonLibrary
+          listings={catalog?.listings ?? []}
+          activeId={recording?.run.id ?? null}
+          onPick={(id) => catalog && pick(id, catalog.mode)}
+          report={report}
         />
 
         <Provenance recording={shown} />

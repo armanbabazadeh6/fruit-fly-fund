@@ -112,16 +112,22 @@ class RunHub:
         return {"started": True, "options": options}
 
     def _worker(self, options: dict):
-        from .arena import Arena
-        from .market import build_season
-
+        # Everything, imports included, is inside the guard: a worker that dies before its
+        # first statement used to leave the hub reporting "starting" forever with no error
+        # anywhere, which is exactly as diagnosable as it sounds.
         try:
+            from .arena import Arena
+            from .market import build_season
+
             rules = ArenaRules(
                 capital=options.get("capital", "100"),
                 order_limit=options.get("order_limit", "10"),
+                daily_orders=int(options.get("daily_orders", 24)),
+                require_gate=bool(options.get("require_gate", True)),
+                reinforcement=str(options.get("reinforcement", "pnl")),
                 neural_ms=float(options.get("neural_ms", 500)),
                 decoder_threshold_hz=float(options.get("decoder_threshold_hz", 2)),
-            )
+            ).validate()
             repeats = int(options.get("repeats", 1))
             label = options.get("label") or f"{options.get('engine', 'neural')}:web"
             for repeat in range(repeats):

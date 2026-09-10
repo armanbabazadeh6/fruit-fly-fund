@@ -46,12 +46,19 @@ The $10 per-order cap **cannot be raised**. Upstream's `Settings` validates
 `order_limit <= min(capital, 10)` and `capital <= 100`, and this project does not patch
 vendored code. More size per order is not available to us; more *orders* and more *bars* are.
 
-### 2. More bars
+### 2. `--preset scalper` — many small orders
+
+The other end of what upstream permits: $2 per order instead of $10. On a 48-bar season the
+wallet, not the gate, becomes the limit — with $10 orders on $100 of capital a fly is fully
+invested after roughly nine fills and every later BUY is vetoed for funds. Smaller orders let
+it keep trading for the whole season (up to the 100-orders-a-day cap).
+
+### 3. More bars
 
 Cost is linear and dominated by the simulation, not the market: roughly 6 s per bar for both
 flies on an M2. 480 bars is about 50 minutes per season per reinforcement mode.
 
-### 3. `--decoder-threshold-hz`
+### 4. `--decoder-threshold-hz`
 
 Barely matters on its own: the difference already exceeds ±2 Hz on 90–98% of bars. It matters
 once the gate is off, because it is then the only thing filtering proposals.

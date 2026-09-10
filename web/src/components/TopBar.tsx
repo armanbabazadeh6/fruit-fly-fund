@@ -3,6 +3,8 @@ import { duration, signedPct, usd } from '../lib/format'
 import './TopBar.css'
 
 interface TopBarProps {
+  /** Present only while a run is in flight. */
+  progress?: { done: number; total: number; etaSeconds: number | null } | null
   source: Source
   listings: RecordingListing[]
   activeId: string | null
@@ -12,6 +14,8 @@ interface TopBarProps {
     market: 'synthetic' | 'coinbase'
     bars: number
     repeats: number
+    require_gate?: boolean
+    daily_orders?: number
   }) => void
   running: boolean
   streamConnected: boolean
@@ -19,6 +23,7 @@ interface TopBarProps {
 }
 
 export function TopBar({
+  progress,
   source,
   listings,
   activeId,
@@ -73,7 +78,7 @@ export function TopBar({
             className="btn btn-primary"
             disabled={running || !streamConnected}
             onClick={() => onRun({ engine: 'neural', market: 'coinbase', bars: 24, repeats: 1 })}
-            title="Runs the real MaleCNS engine. About 10 s per bar on an M2 laptop."
+            title="Runs the real MaleCNS engine. About 6 s per bar on an M2 laptop."
           >
             {running ? 'Flies trading…' : 'Run 24 neural bars'}
           </button>
@@ -81,13 +86,55 @@ export function TopBar({
             type="button"
             className="btn"
             disabled={running || !streamConnected}
-            onClick={() => onRun({ engine: 'procedural', market: 'synthetic', bars: 240, repeats: 1 })}
+            onClick={() =>
+              onRun({
+                engine: 'neural',
+                market: 'coinbase',
+                bars: 24,
+                repeats: 1,
+                require_gate: false,
+                daily_orders: 100,
+              })
+            }
+            title="Same engine with the DNpe017 gate off: every bar produces an order instead of half of them."
+          >
+            Busy run (gate off)
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={running || !streamConnected}
+            onClick={() =>
+              onRun({
+                engine: 'procedural',
+                market: 'synthetic',
+                bars: 240,
+                repeats: 1,
+              })
+            }
             title="Procedural demo: builds and tests the interface. Not neural activity."
           >
             Procedural demo
           </button>
         </div>
       </div>
+
+      {progress && (
+        <div className="topbar-progress">
+          <span className="topbar-progress-track">
+            <span
+              className="topbar-progress-fill"
+              style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
+            />
+          </span>
+          <span className="num">
+            bar {progress.done}/{progress.total}
+            {progress.etaSeconds !== null && progress.etaSeconds > 0
+              ? ` · ~${duration(progress.etaSeconds)} left`
+              : ''}
+          </span>
+        </div>
+      )}
 
       {group && (
         <p className="topbar-report num">

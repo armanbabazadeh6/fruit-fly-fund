@@ -113,6 +113,8 @@ export interface LiveRun {
   seasonBars: { t: number; mid: number; bid: string; ask: string }[]
   arms: ArmMeta[]
   observations: Observation[]
+  /** Wall seconds each completed bar took, for the progress estimate. */
+  barSeconds: number[]
   bars: number
   repeat: number
   repeats: number
