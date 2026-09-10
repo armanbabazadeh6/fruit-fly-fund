@@ -22,7 +22,20 @@ EXPERIMENTAL_VARIABLE = "learning"
 
 # Rule fields this project adds on top of upstream's Settings. They must be identical for
 # both arms, and they are recorded in the fairness block so a reader can see them.
-EXTENSION_FIELDS = ("require_gate", "reinforcement")
+EXTENSION_FIELDS = (
+    "require_gate",
+    "reinforcement",
+    "population_sample",
+    "readout",
+    "readout_margin",
+)
+
+# What kind of comparison a run is. The two flies always differ in exactly one thing:
+#   competition - live: one learns, one is frozen (the default)
+#   exam        - neither learns; one starts from weights learned in an earlier season
+#   reset       - like exam, but the learned efficacies are wiped back to the reconstructed
+#                 baseline first, which asks whether the weights are where any advantage lives
+RUN_KINDS = ("competition", "exam", "reset")
 
 REINFORCEMENT_MODES = ("pnl", "decoy", "shuffled", "none")
 
@@ -78,6 +91,12 @@ class ArenaRules:
     #   shuffled- a seeded permutation of a reference run's pulse schedule
     #   none    - no pulse at all
     reinforcement: str = "pnl"
+    # How many cells the recorded population vector carries (see flyvsly/population.py).
+    population_sample: int = 256
+    # A fitted readout replaces the fixed DNp20 rule when set (see flyvsly/readout.py). The
+    # same model file is used for both flies: the model is shared, the brain is not.
+    readout: str | None = None
+    readout_margin: float = 0.15
 
     def as_settings_kwargs(self, learning: bool) -> dict:
         # Upstream's Settings knows nothing about our extensions, so they are stripped here
@@ -97,6 +116,10 @@ class ArenaRules:
                 f"Unknown reinforcement mode {self.reinforcement!r}; "
                 f"expected one of {REINFORCEMENT_MODES}"
             )
+        if self.population_sample < 0:
+            raise ValueError("population_sample cannot be negative")
+        if not 0 <= self.readout_margin <= 1:
+            raise ValueError("readout_margin must be between 0 and 1")
         return self
 
 
@@ -136,6 +159,10 @@ class MarketSpec:
                 f"Unknown reinforcement mode {self.reinforcement!r}; "
                 f"expected one of {REINFORCEMENT_MODES}"
             )
+        if self.population_sample < 0:
+            raise ValueError("population_sample cannot be negative")
+        if not 0 <= self.readout_margin <= 1:
+            raise ValueError("readout_margin must be between 0 and 1")
         return self
 
 
@@ -153,10 +180,24 @@ class ArenaConfig:
     shuffle_reference: str | None = None   # run id whose pulse schedule is permuted
     shuffle_seed: int = 0
     preset: str = "upstream"
+    # competition | exam | reset. See RUN_KINDS.
+    kind: str = "competition"
+    # Per-arm starting weights, e.g. {"gordon": "trained:runs/brains/train/gordon.npz",
+    # "warren": "baseline"}. Parsed by flyvsly/starting.py.
+    starting: dict = field(
+        default_factory=lambda: {"gordon": "baseline", "warren": "baseline"}
+    )
+    # Where to write each arm's checkpoint at the end of the run, for a later exam.
+    save_brains: Path | None = None
+    # A reference recording whose population vectors are fitted into a readout, and the
+    # label to record as provenance for it.
+    fit_readout: Path | None = None
     thread_arms: bool = True         # arms are independent; the native kernel releases the GIL
     max_wall_seconds: float | None = None
 
     def validate(self):
+        if self.kind not in RUN_KINDS:
+            raise ValueError(f"Unknown run kind {self.kind!r}; expected one of {RUN_KINDS}")
         if self.engine not in ("neural", "procedural"):
             raise ValueError(f"Unknown engine: {self.engine}")
         if self.repeats < 1:
@@ -172,4 +213,19 @@ class ArenaConfig:
             )
         if self.market.bars % 2:
             raise ValueError("Use an even number of bars so ordered pairs stay aligned")
+        if set(self.starting) != {"gordon", "warren"}:
+            raise ValueError("starting weights must name both flies")
+        if self.kind != "competition":
+            # An exam is not about learning during the run: both flies are frozen, and the
+            # experimental variable is the brain each one carries in.
+            if any(spec != "baseline" for spec in self.starting.values()) is False:
+                raise ValueError(
+                    f"A {self.kind} run needs at least one fly starting from trained "
+                    "weights: pass --starting gordon=trained:<checkpoint>"
+                )
+        elif any(spec != "baseline" for spec in self.starting.values()):
+            raise ValueError(
+                "competition runs start both flies from baseline weights; "
+                "use --kind exam to start from trained weights"
+            )
         return self

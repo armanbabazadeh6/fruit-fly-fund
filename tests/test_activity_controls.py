@@ -12,7 +12,7 @@ import pytest
 
 from stonkfly.neural.controller import Decoder
 
-from flyvsly.config import PRESETS, ArenaRules
+from flyvsly.config import EXTENSION_FIELDS, PRESETS, ArenaRules
 from flyvsly.decoder import ConfigurableDecoder
 from flyvsly.fairness import arm_settings, starting_conditions
 from flyvsly.shuffle import counts, load_schedule, permute
@@ -81,7 +81,11 @@ def test_active_preset_is_busier_but_identical_for_both_flies():
     # The per-order cap is upstream's and cannot be raised without patching it.
     assert arm_settings(rules, True).order_limit == "10"
     extensions = starting_conditions(rules)["extensions_identical_for_both_flies"]
-    assert extensions == {"require_gate": False, "reinforcement": "pnl"}
+    assert extensions["require_gate"] is False
+    assert extensions["reinforcement"] == "pnl"
+    # A canary: any new extension field must be considered here, because every one of them is
+    # part of the frozen protocol both flies share.
+    assert set(extensions) == set(EXTENSION_FIELDS)
 
 
 def test_unknown_reinforcement_mode_is_rejected():

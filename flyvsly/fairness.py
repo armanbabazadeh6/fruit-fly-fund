@@ -64,13 +64,45 @@ def assert_decimal_equal(label: str, a: Decimal, b: Decimal, tolerance: Decimal 
         raise AssertionError(f"{label} differs between arms: {a} vs {b}")
 
 
-def starting_conditions(rules: ArenaRules) -> dict:
+def assert_exam_is_fair(kind: str, starting: dict) -> dict:
+    """An exam differs in exactly one thing too, and it is not `learning`.
+
+    Both flies run frozen, under identical rules, on the same market. The single difference is
+    which brain each one carried in: one from an earlier season, one never trained (or, for a
+    reset, the same trained brain with its learned efficacies wiped).
+    """
+    if kind not in ("exam", "reset"):
+        raise AssertionError(f"assert_exam_is_fair called with kind {kind!r}")
+    labels = {arm: str(spec).split(":")[0] for arm, spec in starting.items()}
+    if all(label == "baseline" for label in labels.values()):
+        raise AssertionError("An exam needs at least one trained starting point")
+    if labels["gordon"] == labels["warren"]:
+        raise AssertionError(
+            f"Both flies start from {labels['gordon']!r}: nothing distinguishes them"
+        )
+    if kind == "reset" and "reset" not in labels.values():
+        raise AssertionError("A reset run must start one fly from a reset checkpoint")
+    return {
+        "differing_fields": ["starting_weights"],
+        "starting_weights": {
+            arm: {"kind": str(spec).split(":")[0], "spec": str(spec)}
+            for arm, spec in starting.items()
+        },
+        "both_frozen": True,
+    }
+
+
+def starting_conditions(rules: ArenaRules, kind: str = "competition", starting=None) -> dict:
     """Human- and machine-checkable statement of the shared starting line."""
     on = arm_settings(rules, True)
     off = arm_settings(rules, False)
-    check = assert_only_learning_differs(on, off)
+    if kind == "competition":
+        check = assert_only_learning_differs(on, off)
+    else:
+        check = assert_exam_is_fair(kind, starting or {})
     extensions = {field: getattr(rules, field) for field in EXTENSION_FIELDS}
     return {
+        "kind": kind,
         "extensions_identical_for_both_flies": extensions,
         "capital_usdc": str(rules.capital),
         "order_limit_usdc": str(rules.order_limit),
