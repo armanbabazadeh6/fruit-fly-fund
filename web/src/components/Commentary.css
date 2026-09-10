@@ -1,0 +1,70 @@
+/* Rivalry commentary: a scrolling feed, newest bar at the top, one arm-coloured left border
+   per line. The arm accent arrives as `--arm`; season-wide lines fall back to the neutral
+   line colour. */
+
+.cm-badge {
+  border-color: #5d4318;
+  background: var(--amber-dim);
+  color: var(--amber);
+}
+
+.cm-warn {
+  display: block;
+  margin: 0.7rem 0.9rem 0;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+}
+
+.cm-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0.6rem 0.6rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 460px;
+}
+
+.cm-line {
+  border-left: 2px solid var(--arm, var(--line-2));
+  background: var(--panel-2);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 0.42rem 0.6rem;
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+
+.cm-tag {
+  flex: none;
+  width: 4.6rem;
+  font-size: 0.68rem;
+  color: var(--ink-4);
+  text-align: right;
+}
+
+.cm-text {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.cm-text strong {
+  color: var(--arm, var(--ink));
+  font-weight: 600;
+}
+
+.cm-text em {
+  color: var(--ink-3);
+}
+
+.cm-empty {
+  margin: 0;
+  padding: 1rem 0.9rem 1.2rem;
+  font-size: 0.82rem;
+}

@@ -1,0 +1,140 @@
+.telemetry {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.telemetry-empty {
+  padding: 1rem;
+  font-size: 0.82rem;
+}
+
+.telemetry-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.8rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.meter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.meter-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+}
+
+.meter-label .num {
+  color: var(--ink);
+}
+
+.meter-track {
+  height: 6px;
+  border-radius: 4px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+
+.meter-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent, var(--cyan)) 0%, rgba(255, 255, 255, 0.35) 100%);
+  transition: width 240ms ease;
+}
+
+.meter-hot .meter-fill {
+  background: linear-gradient(90deg, var(--amber) 0%, var(--red) 100%);
+}
+
+.meter-note {
+  font-size: 0.68rem;
+}
+
+.telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem 0.65rem;
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.telemetry-grid dt {
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.telemetry-grid dd {
+  margin: 0.12rem 0 0;
+  font-size: 0.86rem;
+}
+
+.telemetry-memory {
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.telemetry-memory-label {
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.telemetry-memory p {
+  margin: 0.3rem 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+
+.telemetry-hashes {
+  padding: 0.55rem 0.9rem;
+  font-size: 0.68rem;
+}
+
+.telemetry-hashes span {
+  color: var(--ink-2);
+}
+
+.telemetry-spark {
+  padding: 0.7rem 0.9rem 0.9rem;
+  margin-top: auto;
+}
+
+.telemetry-spark-label {
+  display: block;
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  margin-bottom: 0.35rem;
+}
+
+.telemetry-spark svg {
+  width: 100%;
+  height: 46px;
+  display: block;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
+  border-radius: var(--radius-sm);
+}
+
+.telemetry-spark-range {
+  display: block;
+  font-size: 0.66rem;
+  margin-top: 0.3rem;
+}
+
+@media (max-width: 1180px) {
+  .telemetry-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

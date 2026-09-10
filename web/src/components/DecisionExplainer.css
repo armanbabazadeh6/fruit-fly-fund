@@ -1,0 +1,301 @@
+/* Decision explainer: one fly, one bar, read top to bottom: proposal → rule → measured →
+   execution → audit. The arm's own accent arrives as `--arm`; side colour comes from the
+   global up/down tokens so BUY/SELL never changes meaning between flies. */
+
+.dx {
+  border-left: 2px solid var(--arm, var(--line-2));
+}
+
+.dx .dx-arm-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 0.5rem;
+  border-radius: 50%;
+  background: var(--arm, var(--ink-3));
+  vertical-align: middle;
+}
+
+.dx-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.9rem;
+}
+
+.dx-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.dx-side {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-3);
+}
+
+.dx-side-label {
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  font-family: var(--font-num);
+}
+
+.dx-side-note {
+  font-size: 0.74rem;
+  color: var(--ink-3);
+}
+
+.dx-buy {
+  border-color: #1d5c46;
+}
+.dx-buy .dx-side-label {
+  color: var(--green);
+}
+.dx-sell {
+  border-color: #5c2130;
+}
+.dx-sell .dx-side-label {
+  color: var(--red);
+}
+.dx-hold .dx-side-label {
+  color: var(--ink-2);
+}
+.dx-blocked {
+  border-color: #5d4318;
+}
+.dx-blocked .dx-side-label {
+  color: var(--amber);
+}
+
+.dx-callout {
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.dx-callout-warn {
+  border: 1px solid #5d4318;
+  background: var(--amber-dim);
+  color: var(--amber);
+}
+
+.dx-empty {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.dx-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.dx-h {
+  margin: 0;
+  font-size: 0.68rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 600;
+}
+
+.dx-rule-quote {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-left: 2px solid var(--arm, var(--line-2));
+  background: var(--panel-2);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.dx-steps {
+  margin: 0;
+  padding-left: 1.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.dx-steps li::marker {
+  color: var(--ink-4);
+  font-family: var(--font-num);
+}
+
+.dx-measured {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.dx-measured th {
+  text-align: left;
+  padding: 0.25rem 0.5rem 0.25rem 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-4);
+  font-weight: 500;
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.dx-measured td {
+  padding: 0.3rem 0.5rem 0.3rem 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-2);
+}
+
+.dx-measured tr:last-child td {
+  border-bottom: none;
+}
+
+.dx-num {
+  color: var(--ink);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dx-exec-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.dx-exec-product {
+  font-size: 0.74rem;
+}
+
+.dx-exec-lines {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.dx-plan {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.45rem 0.9rem;
+  margin: 0.2rem 0 0;
+}
+
+.dx-plan > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.dx-plan dt {
+  font-size: 0.64rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.dx-plan dd {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.dx-note {
+  display: block;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+}
+
+.dx-note-tag {
+  display: block;
+  font-size: 0.64rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 0.2rem;
+}
+
+.dx-note p {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.dx-audit-note {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.dx-rules {
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+}
+
+.dx-rules summary {
+  cursor: pointer;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.dx-rule-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.3rem 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.dx-rule {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.74rem;
+  border-bottom: 1px dotted var(--line);
+  padding-bottom: 0.15rem;
+}
+
+.dx-rule-key {
+  color: var(--ink-3);
+}
+
+.dx-rule-value {
+  color: var(--ink-2);
+}
+
+.dx-fair {
+  padding: 0.65rem 0.9rem;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.dx-fair p {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+.dx-field {
+  color: var(--amber);
+}

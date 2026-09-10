@@ -1,0 +1,173 @@
+/* Trade history: two arm stat cards over one merged, bar-ordered table. Accent arrives per
+   arm as `--arm`; the selected bar's row is tinted with the arm's accent so a click and its
+   result read as one gesture. */
+
+.th-heads {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.75rem;
+  padding: 0.85rem 0.9rem 0.35rem;
+}
+
+.th-head {
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--arm, var(--line-2));
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  padding: 0.6rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.th-head-top {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.th-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.th-role {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.th-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+  margin: 0;
+}
+
+.th-stats dt {
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.th-stats dd {
+  margin: 0.1rem 0 0;
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.th-empty,
+.th-note,
+.th-none {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.th-none {
+  padding: 1rem 0.9rem 1.2rem;
+}
+
+.th-scroll {
+  max-height: 420px;
+  padding: 0 0.4rem 0.6rem;
+}
+
+.th-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+}
+
+.th-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line-2);
+  color: var(--ink-4);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.th-table td {
+  padding: 0.38rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-2);
+  vertical-align: top;
+}
+
+.th-table tbody tr:hover td {
+  background: var(--panel-2);
+}
+
+.th-row {
+  border-left: 2px solid transparent;
+}
+
+.th-selected td {
+  background: var(--panel-3);
+  color: var(--ink);
+}
+
+.th-selected {
+  border-left-color: var(--arm, var(--line-2));
+}
+
+.th-right {
+  text-align: right;
+}
+
+.th-fly {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.th-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--arm, var(--ink-3));
+  flex: none;
+}
+
+.th-bar {
+  border: 1px solid var(--line-2);
+  background: var(--panel-3);
+  border-radius: var(--radius-sm);
+  padding: 0.08rem 0.4rem;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.th-bar:hover {
+  border-color: var(--arm, var(--cyan));
+  color: var(--ink);
+}
+
+.th-bar[aria-current='true'] {
+  border-color: var(--arm, var(--cyan));
+  color: var(--ink);
+}
+
+.th-time {
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
+.th-reason {
+  min-width: 220px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}

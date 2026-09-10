@@ -1,0 +1,113 @@
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  box-shadow: var(--shadow);
+}
+
+.transport-btn {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--line-2);
+  background: var(--panel-3);
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.transport-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.transport-play {
+  border-color: #37617f;
+  background: linear-gradient(180deg, #26445c, #1a2f41);
+}
+
+.transport-scrub {
+  position: relative;
+  flex: 1;
+  min-width: 140px;
+  display: flex;
+  align-items: center;
+}
+
+.transport-scrub input[type='range'] {
+  width: 100%;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  position: relative;
+  z-index: 2;
+  cursor: pointer;
+}
+
+.transport-scrub input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 4px;
+  background: var(--panel-3);
+}
+
+.transport-scrub input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 2px solid #0b1117;
+}
+
+.transport-scrub input[type='range']::-moz-range-track {
+  height: 4px;
+  border-radius: 4px;
+  background: var(--panel-3);
+}
+
+.transport-progress {
+  position: absolute;
+  left: 0;
+  height: 4px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--amber), var(--cyan));
+  pointer-events: none;
+  z-index: 1;
+}
+
+.transport-readout {
+  font-size: 0.74rem;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.transport-speeds {
+  display: flex;
+  gap: 0.15rem;
+}
+
+.transport-speed {
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 0.2rem 0.4rem;
+  font-size: 0.68rem;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.transport-speed.is-active {
+  border-color: var(--line-2);
+  background: var(--panel-3);
+  color: var(--ink);
+}
+
+.transport-live {
+  margin-left: 0.25rem;
+}

@@ -1,0 +1,437 @@
+"""Fly vs. Fly command line.
+
+    flyvsly doctor                 what this machine can run, and what it costs
+    flyvsly prepare                download and compile the MaleCNS v1.0 graph
+    flyvsly run                    one or more seasons of the competition
+    flyvsly serve                  serve the browser experience with a live feed
+    flyvsly list / report          what has been run, and what the repeats say
+
+Paper trading only. No credentials, no account, no order leaves this process.
+"""
+
+import argparse
+import datetime
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from .config import ArenaConfig, ArenaRules, MarketSpec
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _rules(args) -> ArenaRules:
+    return ArenaRules(
+        products=tuple(args.products),
+        capital=args.capital,
+        order_limit=args.order_limit,
+        paper_fee=args.paper_fee,
+        decoder_threshold_hz=args.decoder_threshold_hz,
+        neural_ms=args.neural_ms,
+        daily_orders=args.daily_orders,
+    )
+
+
+def _market(args, repeat: int) -> MarketSpec:
+    if args.market == "synthetic":
+        return MarketSpec(kind="synthetic", product=args.products[0], bars=args.bars,
+                          seed=args.seed + repeat * 7919, initial_price=args.initial_price)
+    if args.start is None:
+        # Disjoint repeat seasons: step a whole season further back each time.
+        return MarketSpec(
+            kind="coinbase",
+            product=args.products[0],
+            bars=args.bars,
+            window_offset_bars=repeat * args.bars,
+        )
+    start = datetime.datetime.fromisoformat(args.start.replace("Z", "+00:00"))
+    start = start + datetime.timedelta(seconds=args.bars * 60 * repeat)
+    return MarketSpec(
+        kind="coinbase",
+        product=args.products[0],
+        bars=args.bars,
+        start_iso=start.isoformat().replace("+00:00", "Z"),
+    )
+
+
+def _progress(kind, payload):
+    if kind == "bar":
+        arms = payload["arms"]
+        parts = []
+        for arm_id in ("gordon", "warren"):
+            record = arms[arm_id]
+            side = record["decision"]["side"]
+            status = record["execution"]["status"]
+            equity = record["portfolio"]["equity"]
+            parts.append(f"{arm_id[:4]} {side:<7} {status:<7} {equity:>10}")
+        print(
+            f"[{payload['i'] + 1:>4}/{payload['bars']}] "
+            f"mid {payload['market']['mid']:.2f}  " + " | ".join(parts)
+            + f"  ({payload['elapsed']:.1f}s)",
+            flush=True,
+        )
+    elif kind == "arms_ready":
+        for arm in payload["arms"]:
+            print(
+                f"  {arm['name']}: {arm['role_label']} — {arm['backend']['label']}",
+                flush=True,
+            )
+    elif kind == "recording":
+        summary = payload["summary"]
+        print(
+            f"  done: gordon {summary['arms']['gordon']['return_pct']:+.3f}%  "
+            f"warren {summary['arms']['warren']['return_pct']:+.3f}%  "
+            f"buy&hold {_bench_pct(summary['benchmarks']['buy_and_hold']):+.3f}%",
+            flush=True,
+        )
+
+
+def _bench_pct(benchmark):
+    curve = benchmark["curve"]
+    initial = float(benchmark["initial_capital"])
+    return (curve[-1] / initial - 1) * 100 if initial else 0.0
+
+
+def cmd_doctor(args):
+    import numpy
+
+    total_ram = _total_ram_gb()
+    data = Path(args.data)
+    graph = data / "graph.npz"
+    report = {
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "cpu_count": os.cpu_count(),
+        "ram_gb": round(total_ram, 1) if total_ram else None,
+        "python": sys.version.split()[0],
+        "numpy": numpy.__version__,
+        "c_compiler": shutil.which("c++") or shutil.which("g++") or None,
+        "graph_present": graph.exists(),
+        "graph_bytes": graph.stat().st_size if graph.exists() else 0,
+        "gpu_acceleration": "not used: the vendored kernel integrates on the CPU",
+        "measured_on_apple_m2_8gb": {
+            "preparation_peak_gb": 1.33,
+            "two_arms_resident_gb": 0.7,
+            "observation_seconds_cold_cache": [2.2, 8.0],
+            "observation_seconds_warm_cache": 2.2,
+            "full_season_48_bars_seconds": [320, 660],
+            "note": (
+                "Two 500 ms observations run concurrently on separate threads, so a bar "
+                "costs roughly one arm's time on an 8-core machine. Wall time, not memory, "
+                "bounds the season length. `--measure` times this machine instead."
+            ),
+        },
+    }
+    if total_ram and total_ram < 4:
+        report["warning"] = "Less than 4 GB RAM: the full graph will not fit."
+    if args.measure and graph.exists():
+        report["measured"] = _measure()
+    print(json.dumps(report, indent=2))
+    return 0
+
+
+def _total_ram_gb():
+    try:
+        if sys.platform == "darwin":
+            return int(
+                subprocess.check_output(["sysctl", "-n", "hw.memsize"]).strip()
+            ) / 2**30
+        pages = os.sysconf("SC_PHYS_PAGES")
+        size = os.sysconf("SC_PAGE_SIZE")
+        return pages * size / 2**30
+    except Exception:
+        return None
+
+
+def _measure():
+    """One real observation, measured now. Never part of a recorded run."""
+    import resource
+
+    from stonkfly.display import market_frame
+
+    from .backends.neural import NeuralBackend
+    from .fairness import arm_settings
+    from .market import build_season
+
+    settings = arm_settings(ArenaRules(), True)
+    season = build_season(MarketSpec(kind="synthetic", bars=4, seed=1))
+    quote = season.quote(0)
+    frame = market_frame("BTC-USDC", season.history(0), quote.bid, quote.ask)
+    started = time.perf_counter()
+    backend = NeuralBackend(settings, data_root="data")
+    build = time.perf_counter() - started
+    started = time.perf_counter()
+    out = backend.observe(frame, "none")
+    observe = time.perf_counter() - started
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return {
+        "brain_build_seconds": round(build, 2),
+        "observation_seconds": round(observe, 2),
+        "total_spikes": out["total_spikes"],
+        "KC_spikes": out["KC_spikes"],
+        "side": out["side"],
+        "process_peak_rss_gb": round(peak / (2**30 if sys.platform == "darwin" else 2**20), 2),
+    }
+
+
+def cmd_prepare(args):
+    from stonkfly.data import prepare, verify
+
+    started = time.perf_counter()
+    prepare(args.reuse_doomfly)
+    print(
+        f"prepare: {time.perf_counter() - started:.1f}s, verified {json.dumps(verify())}",
+        flush=True,
+    )
+    return 0
+
+
+def cmd_run(args):
+    from .arena import Arena
+    from .market import build_season
+
+    config = ArenaConfig(
+        rules=_rules(args),
+        market=_market(args, 0),
+        engine=args.engine,
+        repeats=args.repeats,
+        out=Path(args.out),
+        label=args.label,
+        max_wall_seconds=args.max_wall_seconds,
+    )
+    if args.engine == "neural":
+        graph = Path(args.data) / "graph.npz"
+        if not graph.exists():
+            print(
+                "Neural engine needs the compiled graph. Run: flyvsly prepare",
+                file=sys.stderr,
+            )
+            return 2
+    label = args.label or f"{args.engine}:{config.market.describe()}"
+    for repeat in range(args.repeats):
+        market = _market(args, repeat)
+        season = build_season(market)
+        arena = Arena(config, on_event=_progress if not args.quiet else None, data_root=args.data)
+        run_id = time.strftime("%Y%m%d-%H%M%S", time.localtime()) + f"-r{repeat}"
+        print(
+            f"run {run_id}: {label} | {market.describe()} | bars={market.bars} "
+            f"engine={config.engine}",
+            flush=True,
+        )
+        recording = arena.run(run_id=run_id, season=season, repeat=repeat)
+        _write_batch(args.out, label, recording, repeat)
+    if args.repeats > 1:
+        from .report import load_manifests, summarise
+
+        print(json.dumps(summarise(load_manifests(args.out))["groups"][0], indent=2))
+    return 0
+
+
+def _write_batch(out, label, recording, repeat):
+    path = Path(out) / "batches" / f"{label.replace('/', '_')}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.loads(path.read_text()) if path.exists() else {"label": label, "runs": []}
+    payload["runs"] = [r for r in payload["runs"] if r["id"] != recording["run"]["id"]]
+    payload["runs"].append(
+        {
+            "id": recording["run"]["id"],
+            "repeat": repeat,
+            "season": recording["run"]["season"],
+            "comparison": recording["summary"]["comparison"],
+            "arms": {
+                k: {
+                    "return_pct": v["return_pct"],
+                    "final_equity": v["final_equity"],
+                    "fills": v["fills"],
+                }
+                for k, v in recording["summary"]["arms"].items()
+            },
+            "benchmarks": {
+                "buy_and_hold_pct": _bench_pct(recording["summary"]["benchmarks"]["buy_and_hold"])
+            },
+        }
+    )
+    path.write_text(json.dumps(payload, indent=1) + "\n")
+
+
+def cmd_serve(args):
+    from .server import serve
+
+    return serve(
+        port=args.port,
+        runs=Path(args.runs),
+        web=Path(args.web),
+        data=args.data,
+        open_browser=not args.no_open,
+    )
+
+
+def cmd_publish(args):
+    """Copy recordings next to the web bundle so a static host has real data to show."""
+    import shutil
+
+    from .report import load_manifests, summarise
+
+    web = Path(args.web)
+    web.mkdir(parents=True, exist_ok=True)
+    manifests = load_manifests(args.runs)
+    if args.neural_only:
+        manifests = [m for m in manifests if m["run"].get("engine") == "neural"]
+    chosen = manifests[: args.limit]
+    listings = []
+    for manifest in chosen:
+        source = Path(manifest["path"]) / "recording.json"
+        if not source.exists():
+            continue
+        shutil.copyfile(source, web / f"{manifest['id']}.json")
+        summary = manifest.get("summary") or {}
+        arms = summary.get("arms") or {}
+        benchmarks = summary.get("benchmarks") or {}
+        listings.append(
+            {
+                "id": manifest["id"],
+                "label": manifest["run"].get("label"),
+                "engine": manifest["run"].get("engine"),
+                "season": manifest["run"].get("season"),
+                "market": (manifest["run"].get("season") or "").split(":")[0],
+                "bars": summary.get("bars"),
+                "created": manifest["run"].get("created"),
+                "duration_seconds": summary.get("duration_seconds"),
+                "seconds_per_bar_mean": summary.get("seconds_per_bar_mean"),
+                "truncated": summary.get("truncated", False),
+                "inputs_identical_every_bar": manifest["run"].get(
+                    "inputs_identical_every_bar"
+                ),
+                "returns": {
+                    "gordon": (arms.get("gordon") or {}).get("return_pct"),
+                    "warren": (arms.get("warren") or {}).get("return_pct"),
+                    "buy_and_hold": _bench_pct(benchmarks.get("buy_and_hold") or {"curve": [], "initial_capital": "1"}),
+                },
+                "memory_changed_edges": (
+                    (arms.get("gordon") or {}).get("final_memory") or {}
+                ).get("changed_edges"),
+            }
+        )
+    (web / "index.json").write_text(json.dumps(listings, indent=1) + "\n")
+    (web / "report.json").write_text(
+        json.dumps(summarise(manifests), indent=1) + "\n"
+    )
+    print(f"published {len(listings)} recording(s) to {web}")
+    return 0
+
+
+def cmd_list(args):
+    from .report import load_manifests
+
+    for manifest in load_manifests(args.runs):
+        summary = manifest.get("summary") or {}
+        arms = summary.get("arms") or {}
+        print(
+            f"{manifest['id']}  {manifest['run'].get('engine','?'):<10} "
+            f"{manifest['run'].get('season','?'):<46} "
+            f"gordon {(arms.get('gordon') or {}).get('return_pct', 0):+7.2f}%  "
+            f"warren {(arms.get('warren') or {}).get('return_pct', 0):+7.2f}%"
+        )
+    return 0
+
+
+def cmd_report(args):
+    from .report import load_manifests, summarise
+
+    report = summarise(load_manifests(args.runs))
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return 0
+    for group in report["groups"]:
+        print(
+            f"\n{group['label']}  ({group['repeats']} season(s), engine={group['engine']})\n"
+            f"  mean return   gordon {group['mean_gordon_pct']:+.3f}%   "
+            f"warren {group['mean_warren_pct']:+.3f}%   "
+            f"buy&hold {group['mean_buy_hold_pct']:+.3f}%\n"
+            f"  paired delta (gordon − warren): mean {group['mean_delta_pct']:+.3f}%  "
+            f"spread {group['delta_spread_pct']:.3f}%  "
+            f"range [{group['delta_min_pct']:+.3f}, {group['delta_max_pct']:+.3f}]\n"
+            f"  memory-on wins {group['memory_on_wins']} / "
+            f"memory-off wins {group['memory_off_wins']} / ties {group['ties']}\n"
+            f"  mean changed KC→MBON efficacies (memory-on): {group['mean_changed_edges']}"
+        )
+    print(f"\n{report['reading_note']}")
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="flyvsly", description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    doctor = sub.add_parser("doctor", help="environment and cost report")
+    doctor.add_argument("--data", default="data")
+    doctor.add_argument("--measure", action="store_true", help="build a brain and time one observation")
+    doctor.set_defaults(func=cmd_doctor)
+
+    prepare = sub.add_parser("prepare", help="download and compile MaleCNS v1.0")
+    prepare.add_argument("--reuse-doomfly", type=Path)
+    prepare.set_defaults(func=cmd_prepare)
+
+    run = sub.add_parser("run", help="run the competition (paper only)")
+    run.add_argument("--engine", choices=["neural", "procedural"], default="neural")
+    run.add_argument("--market", choices=["synthetic", "coinbase"], default="synthetic")
+    run.add_argument("--bars", type=int, default=48)
+    run.add_argument("--repeats", type=int, default=1)
+    run.add_argument("--seed", type=int, default=7)
+    run.add_argument(
+        "--start",
+        default=None,
+        help="coinbase window start (ISO 8601); omit to anchor to the newest available data",
+    )
+    run.add_argument("--initial-price", default="60000")
+    run.add_argument("--label")
+    run.add_argument("--out", default="runs")
+    run.add_argument("--data", default="data")
+    run.add_argument("--products", nargs="+", default=["BTC-USDC"])
+    run.add_argument("--capital", default="100")
+    run.add_argument("--order-limit", default="10")
+    run.add_argument("--paper-fee", default="0.006")
+    run.add_argument("--daily-orders", type=int, default=24)
+    run.add_argument("--decoder-threshold-hz", type=float, default=2)
+    run.add_argument("--neural-ms", type=float, default=500)
+    run.add_argument("--max-wall-seconds", type=float, default=None)
+    run.add_argument("--quiet", action="store_true")
+    run.set_defaults(func=cmd_run)
+
+    serve = sub.add_parser("serve", help="serve the web experience with live runs")
+    serve.add_argument("--port", type=int, default=7777)
+    serve.add_argument("--runs", default="runs")
+    serve.add_argument("--web", default="web/dist")
+    serve.add_argument("--data", default="data")
+    serve.add_argument("--no-open", action="store_true")
+    serve.set_defaults(func=cmd_serve)
+
+    publish = sub.add_parser(
+        "publish", help="copy recordings next to the web bundle for a static host"
+    )
+    publish.add_argument("--runs", default="runs")
+    publish.add_argument("--web", default="web/public/recordings")
+    publish.add_argument("--limit", type=int, default=8)
+    publish.add_argument("--neural-only", action="store_true")
+    publish.set_defaults(func=cmd_publish)
+
+    listing = sub.add_parser("list", help="list recordings")
+    listing.add_argument("--runs", default="runs")
+    listing.set_defaults(func=cmd_list)
+
+    report = sub.add_parser("report", help="aggregate repeated seasons")
+    report.add_argument("--runs", default="runs")
+    report.add_argument("--json", action="store_true")
+    report.set_defaults(func=cmd_report)
+
+    args = parser.parse_args(argv)
+    return args.func(args) or 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

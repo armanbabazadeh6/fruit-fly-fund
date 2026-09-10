@@ -1,0 +1,99 @@
+.provenance {
+  display: flex;
+  flex-direction: column;
+}
+
+.provenance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem 1.4rem;
+  padding: 1rem 1.1rem;
+}
+
+.provenance-grid h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.provenance-grid p,
+.provenance-grid li {
+  font-size: 0.8rem;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.provenance-grid ul {
+  margin: 0;
+  padding-left: 1.05rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.provenance-rules {
+  list-style: none;
+  padding-left: 0 !important;
+  margin-top: 0.5rem !important;
+}
+
+.provenance-rules li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 0.22rem;
+  font-size: 0.74rem;
+}
+
+.provenance-rules li span:first-child {
+  color: var(--ink-4);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 0.66rem;
+}
+
+.provenance-rules li span:last-child {
+  color: var(--ink);
+  text-align: right;
+}
+
+.provenance-disclaimers {
+  margin: 0;
+  padding: 0.8rem 1.1rem 1rem;
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 1.5rem;
+  list-style: none;
+}
+
+.provenance-disclaimers li {
+  font-size: 0.74rem;
+  color: var(--ink-3);
+  padding-left: 1.1rem;
+  position: relative;
+}
+
+.provenance-disclaimers li::before {
+  content: '§';
+  position: absolute;
+  left: 0;
+  color: var(--amber);
+  opacity: 0.7;
+}
+
+@media (max-width: 1180px) {
+  .provenance-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .provenance-grid,
+  .provenance-disclaimers {
+    grid-template-columns: 1fr;
+  }
+}

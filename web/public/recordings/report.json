@@ -1,0 +1,72 @@
+{
+ "groups": [
+  {
+   "label": "season-coinbase-48",
+   "engine": "neural",
+   "repeats": 3,
+   "runs": [
+    {
+     "id": "20260910-144513-r2",
+     "season": "coinbase:BTC-USDC:newest-96bars:bars=48",
+     "engine": "neural",
+     "repeat": 2,
+     "bars": 48,
+     "gordon_pct": -0.806771,
+     "warren_pct": -0.763244,
+     "buy_hold_pct": -0.656109,
+     "cash_pct": 0.0,
+     "delta_pct": -0.04352699999999998,
+     "gordon_fills": 17,
+     "warren_fills": 15,
+     "changed_edges": 3459,
+     "seconds_per_bar": 5.71
+    },
+    {
+     "id": "20260910-143909-r1",
+     "season": "coinbase:BTC-USDC:newest-48bars:bars=48",
+     "engine": "neural",
+     "repeat": 1,
+     "bars": 48,
+     "gordon_pct": -0.831316,
+     "warren_pct": -0.605971,
+     "buy_hold_pct": -0.706296,
+     "cash_pct": 0.0,
+     "delta_pct": -0.22534500000000002,
+     "gordon_fills": 13,
+     "warren_fills": 14,
+     "changed_edges": 3437,
+     "seconds_per_bar": 7.5131
+    },
+    {
+     "id": "20260910-143345-r0",
+     "season": "coinbase:BTC-USDC:newest-0bars:bars=48",
+     "engine": "neural",
+     "repeat": 0,
+     "bars": 48,
+     "gordon_pct": -1.362336,
+     "warren_pct": -1.353606,
+     "buy_hold_pct": -0.932765,
+     "cash_pct": 0.0,
+     "delta_pct": -0.008729999999999905,
+     "gordon_fills": 15,
+     "warren_fills": 15,
+     "changed_edges": 3431,
+     "seconds_per_bar": 6.6774
+    }
+   ],
+   "mean_gordon_pct": -1.0001,
+   "mean_warren_pct": -0.9076,
+   "mean_buy_hold_pct": -0.7651,
+   "mean_delta_pct": -0.0925,
+   "delta_spread_pct": 0.095,
+   "delta_min_pct": -0.2253,
+   "delta_max_pct": -0.0087,
+   "memory_on_wins": 0,
+   "memory_off_wins": 3,
+   "ties": 0,
+   "mean_changed_edges": 3442.33
+  }
+ ],
+ "recordings": 3,
+ "reading_note": "Memory-on wins N of M seasons is a count, not evidence. With few seasons the paired spread usually swamps the mean difference, and no run here demonstrates profitable learning."
+}

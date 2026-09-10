@@ -1,0 +1,59 @@
+[
+ {
+  "id": "20260910-144513-r2",
+  "label": "season-coinbase-48",
+  "engine": "neural",
+  "season": "coinbase:BTC-USDC:newest-96bars:bars=48",
+  "market": "coinbase",
+  "bars": 48,
+  "created": 1789065913.599217,
+  "duration_seconds": 277.809,
+  "seconds_per_bar_mean": 5.71,
+  "truncated": false,
+  "inputs_identical_every_bar": true,
+  "returns": {
+   "gordon": -0.806771,
+   "warren": -0.763244,
+   "buy_and_hold": -0.6561086620999967
+  },
+  "memory_changed_edges": 3459
+ },
+ {
+  "id": "20260910-143909-r1",
+  "label": "season-coinbase-48",
+  "engine": "neural",
+  "season": "coinbase:BTC-USDC:newest-48bars:bars=48",
+  "market": "coinbase",
+  "bars": 48,
+  "created": 1789065549.505852,
+  "duration_seconds": 364.053,
+  "seconds_per_bar_mean": 7.5131,
+  "truncated": false,
+  "inputs_identical_every_bar": true,
+  "returns": {
+   "gordon": -0.831316,
+   "warren": -0.605971,
+   "buy_and_hold": -0.7062957950000004
+  },
+  "memory_changed_edges": 3437
+ },
+ {
+  "id": "20260910-143345-r0",
+  "label": "season-coinbase-48",
+  "engine": "neural",
+  "season": "coinbase:BTC-USDC:newest-0bars:bars=48",
+  "market": "coinbase",
+  "bars": 48,
+  "created": 1789065225.0931048,
+  "duration_seconds": 324.339,
+  "seconds_per_bar_mean": 6.6774,
+  "truncated": false,
+  "inputs_identical_every_bar": true,
+  "returns": {
+   "gordon": -1.362336,
+   "warren": -1.353606,
+   "buy_and_hold": -0.9327646251999888
+  },
+  "memory_changed_edges": 3431
+ }
+]

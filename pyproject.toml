@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flyvsly"
+version = "0.1.0"
+description = "Fly vs. Fly: a paper-trading competition between two MaleCNS fly simulations, one with memory updates and one without"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2,<3",
+  "pandas>=2.2,<4",
+  "pyarrow>=17",
+  "Pillow>=10",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+# Live Coinbase execution is intentionally absent. Fly vs. Fly is paper only and does not
+# import stonkfly.actions or stonkfly.broker.CoinbaseBroker. If you ever want upstream's
+# live path, install it yourself in a separate environment: coinbase-agentkit==0.7.4,
+# coinbase-advanced-py==1.8.4. See UPSTREAM.md.
+
+[project.scripts]
+flyvsly = "flyvsly.cli:main"
+
+[tool.setuptools]
+packages = [
+  "flyvsly",
+  "flyvsly.backends",
+  "stonkfly",
+  "stonkfly.neural",
+]
+package-dir = { "flyvsly" = "flyvsly", "stonkfly" = "vendor/stonkfly" }
+
+[tool.setuptools.package-data]
+"stonkfly.neural" = ["*.cpp", "*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "slow: exercises the full retained connectome and needs several GB of RAM",
+]

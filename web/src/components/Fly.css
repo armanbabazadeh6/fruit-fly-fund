@@ -1,0 +1,180 @@
+/* A cartoon fly. Everything animated here is pure CSS: the mood class on the root picks the
+   wing keyframes and their rate, and `--fly-delay` (set by the desk) shifts the phase so two
+   flies on one page never flap in lockstep. */
+
+.fly {
+  display: block;
+  overflow: visible;
+}
+
+/* Wings pivot about the wing root, expressed in viewBox units. */
+.fly__wing {
+  transform-box: view-box;
+  transform-origin: 58px 50px;
+  animation-delay: var(--fly-delay, 0s);
+  animation-duration: 1.15s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+.fly__wing-pane {
+  fill: var(--cyan-dim);
+  fill-opacity: 0.5;
+  stroke: var(--cyan);
+  stroke-opacity: 0.34;
+  stroke-width: 1;
+}
+
+.fly__wing-vein {
+  fill: none;
+  stroke: var(--cyan);
+  stroke-opacity: 0.2;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+
+.fly__leg {
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.fly__abdomen {
+  fill: var(--line-2);
+  stroke: var(--ink-4);
+  stroke-width: 1;
+}
+
+.fly__thorax {
+  fill: var(--line-2);
+  stroke: var(--ink-4);
+  stroke-width: 1.2;
+}
+
+.fly__head {
+  fill: var(--line-2);
+  stroke: var(--ink-4);
+  stroke-width: 1.2;
+}
+
+/* The compound facets read as ridges in the eye; the glint sits on top of the accent fill. */
+.fly__eye-facet {
+  fill: none;
+  stroke: var(--bg);
+  stroke-opacity: 0.34;
+  stroke-width: 1;
+}
+
+.fly__eye-glint {
+  fill: var(--ink);
+  fill-opacity: 0.4;
+}
+
+.fly__antenna {
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
+.fly__body {
+  transform-box: view-box;
+  transform-origin: 70px 70px;
+}
+
+.fly--idle .fly__wing {
+  animation-name: fly-flap-idle;
+}
+
+.fly--buy .fly__wing,
+.fly--sell .fly__wing {
+  animation-name: fly-flap-excite;
+  animation-duration: 0.26s;
+}
+
+.fly--veto .fly__wing,
+.fly--blocked .fly__wing {
+  animation-name: fly-flap-tuck;
+  animation-duration: 2.1s;
+}
+
+/* Halted: wings folded, no motion, and the whole fly reads as switched off. */
+.fly--halted .fly__wing {
+  animation: none;
+  transform: rotate(-44deg);
+  opacity: 0.35;
+}
+
+.fly--idle .fly__body {
+  animation: fly-bob 2.6s ease-in-out infinite;
+  animation-delay: var(--fly-delay, 0s);
+}
+
+.fly--buy .fly__body,
+.fly--sell .fly__body {
+  animation: fly-bob 0.9s ease-in-out infinite;
+  animation-delay: var(--fly-delay, 0s);
+}
+
+@keyframes fly-flap-idle {
+  0%,
+  100% {
+    transform: rotate(-13deg);
+  }
+  50% {
+    transform: rotate(15deg);
+  }
+}
+
+@keyframes fly-flap-excite {
+  0%,
+  100% {
+    transform: rotate(-30deg);
+  }
+  50% {
+    transform: rotate(34deg);
+  }
+}
+
+/* Half-tucked: a small twitch around a drooped pose, never a full sweep. */
+@keyframes fly-flap-tuck {
+  0%,
+  100% {
+    transform: rotate(-30deg);
+  }
+  50% {
+    transform: rotate(-21deg);
+  }
+}
+
+@keyframes fly-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2.5px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fly__wing,
+  .fly__body {
+    animation: none !important;
+  }
+
+  .fly__wing {
+    transform: rotate(-9deg);
+  }
+
+  .fly--veto .fly__wing,
+  .fly--blocked .fly__wing {
+    transform: rotate(-28deg);
+  }
+
+  .fly--halted .fly__wing {
+    transform: rotate(-44deg);
+  }
+}

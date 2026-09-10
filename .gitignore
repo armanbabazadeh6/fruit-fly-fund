@@ -1,0 +1,20 @@
+# Local data: MaleCNS v1.0 sources, compiled graph, cached market seasons.
+data/
+# Run output: ledgers, checkpoints, recordings, brain state.
+runs/
+# Web build output and deps.
+web/node_modules/
+web/dist/
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+.pytest_cache/
+# Never commit credentials or account material. This project places no orders.
+.env
+.env.*
+coinbase-key.json
+# TypeScript build cache
+web/tsconfig.tsbuildinfo

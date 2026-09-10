@@ -1,0 +1,263 @@
+/* A fly's trading desk: a monitor carrying this arm's own equity curve, a lamp lit in the arm's
+   accent, a coffee cup, and the fly itself layered over the flat scene. */
+
+.desk {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.desk__name {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.desk__chips {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.desk__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.desk__live::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: desk-pulse 1.9s ease-in-out infinite;
+}
+
+.desk__strip {
+  display: flex;
+  align-items: baseline;
+  gap: 1.1rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.9rem;
+  min-height: 2.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.desk__cell {
+  display: flex;
+  align-items: baseline;
+  gap: 0.42rem;
+}
+
+.desk__label {
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.desk__side {
+  font-size: 0.86rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.desk__ret {
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.desk__waiting {
+  margin: 0;
+  padding: 0.78rem 0.9rem;
+  min-height: 2.5rem;
+  font-size: 0.8rem;
+  font-style: italic;
+  border-bottom: 1px solid var(--line);
+}
+
+.desk__stage {
+  position: relative;
+  margin: 0.6rem 0.9rem 0.9rem;
+  pointer-events: none;
+}
+
+.desk__art {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* The fly is a real <svg> of its own so it keeps an accessible name, positioned over the scene:
+   x 112/320, y 18/180, 132 wide — its feet land on the desk line at y = 118. */
+.desk__fly {
+  position: absolute;
+  left: 35%;
+  top: 10%;
+  width: 41.25%;
+  aspect-ratio: 140 / 110;
+}
+
+.desk__fly svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.desk--halted .desk__stage {
+  opacity: 0.45;
+  filter: saturate(0.4);
+}
+
+.desk__monitor {
+  fill: var(--panel-2);
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+
+.desk__screen {
+  fill: var(--bg);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.desk__grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.desk__axis {
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+
+.desk__spark {
+  fill: none;
+  stroke: var(--cyan);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.desk__spark-area {
+  fill: var(--cyan-dim);
+  fill-opacity: 0.55;
+}
+
+.desk__spark-dot {
+  fill: var(--cyan);
+}
+
+.desk__spark-empty {
+  stroke: var(--line-2);
+  stroke-width: 1.4;
+  stroke-dasharray: 3 4;
+}
+
+.desk__stand {
+  fill: var(--panel-3);
+}
+
+.desk__top {
+  fill: var(--panel-3);
+}
+
+.desk__front {
+  fill: var(--panel);
+}
+
+.desk__edge {
+  fill: var(--line-2);
+}
+
+.desk__cup {
+  fill: var(--panel-3);
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+
+.desk__cup-rim {
+  fill: var(--panel-2);
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+
+.desk__coffee {
+  fill: var(--amber-dim);
+}
+
+.desk__cup-handle {
+  fill: none;
+  stroke: var(--line-2);
+  stroke-width: 2.4;
+}
+
+.desk__steam {
+  fill: none;
+  stroke: var(--ink-4);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  animation: desk-steam 3.8s ease-in-out infinite;
+}
+
+.desk__steam:nth-child(2) {
+  animation-delay: -1.3s;
+}
+
+.desk__steam:nth-child(3) {
+  animation-delay: -2.5s;
+}
+
+.desk__lamp {
+  fill: var(--panel-3);
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+
+.desk__lamp-stem {
+  fill: none;
+  stroke: var(--line-2);
+  stroke-width: 3;
+}
+
+.desk__shade {
+  fill: var(--panel-3);
+  stroke: var(--line-2);
+  stroke-width: 1.2;
+}
+
+.desk__bulb {
+  opacity: 0.32;
+}
+
+@keyframes desk-steam {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  25% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-16px);
+  }
+}
+
+@keyframes desk-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
