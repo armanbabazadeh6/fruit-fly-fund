@@ -64,7 +64,7 @@ def assert_decimal_equal(label: str, a: Decimal, b: Decimal, tolerance: Decimal 
         raise AssertionError(f"{label} differs between arms: {a} vs {b}")
 
 
-def assert_exam_is_fair(kind: str, starting: dict) -> dict:
+def assert_exam_is_fair(kind: str, starting: dict, on=None, off=None) -> dict:
     """An exam differs in exactly one thing too, and it is not `learning`.
 
     Both flies run frozen, under identical rules, on the same market. The single difference is
@@ -82,6 +82,23 @@ def assert_exam_is_fair(kind: str, starting: dict) -> dict:
         )
     if kind == "reset" and "reset" not in labels.values():
         raise AssertionError("A reset run must start one fly from a reset checkpoint")
+
+    # The whole point of an exam is that nothing is learned while it runs, so check the
+    # settings rather than asserting the intention. The first version of this returned
+    # `both_frozen: True` unconditionally, and the run it described had learning on for one
+    # fly: the recording claimed a property the run did not have.
+    if on is not None and off is not None:
+        for name, settings in (("experimental", on), ("control", off)):
+            if settings.learning:
+                raise AssertionError(
+                    f"The {name} arm has learning enabled: an exam must freeze both flies"
+                )
+        left, right = _comparable(on), _comparable(off)
+        differing = sorted(k for k in set(left) | set(right) if left.get(k) != right.get(k))
+        if differing:
+            raise AssertionError(
+                f"An exam must differ only in starting weights; these settings also differ: {differing}"
+            )
     return {
         "differing_fields": ["starting_weights"],
         "starting_weights": {
@@ -99,7 +116,7 @@ def starting_conditions(rules: ArenaRules, kind: str = "competition", starting=N
     if kind == "competition":
         check = assert_only_learning_differs(on, off)
     else:
-        check = assert_exam_is_fair(kind, starting or {})
+        check = assert_exam_is_fair(kind, starting or {}, on, off)
     extensions = {field: getattr(rules, field) for field in EXTENSION_FIELDS}
     return {
         "kind": kind,

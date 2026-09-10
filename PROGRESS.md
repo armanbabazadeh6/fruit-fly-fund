@@ -9,14 +9,25 @@ Paused with a clean tree at `9ffce9c`. The two remaining exam runs (`exam-reset`
 `exam-readout`) were still going when we stopped; if they finished, `runs/` has them and
 `results/report.md` needs committing.
 
+**A bug found in the exam feature, and fixed**
+
+The first two exam runs were invalid and their recordings have been deleted. `personas_for()`
+relabelled the experimental fly "trained brain, frozen" but left `learning=True` on it, so the
+exam kept learning *during* the exam — the opposite of the protocol — while the fairness block
+claimed `both_frozen: true`. `assert_exam_is_fair` now reads the two arms' settings instead of
+restating the intention: it raises if either arm can learn, and if the settings differ in
+anything but the starting weights. Both cases are tested, along with the personas themselves.
+
+Nothing from those runs is reported anywhere. The exam feature needs one re-run, which is a
+single command.
+
 **Where the three requested features stand**
 
-1. **Exam (held-out)** — built, tested, verified on real data. A training run learned on the
-   newest season and checkpointed both brains; an exam run then applied `gordon`'s trained
-   weights on an unseen window and recorded the checkpoint digest with
-   `differing_fields: ["starting_weights"]`. First reading, 12 bars: trained −0.137% against
-   fresh baseline −0.128%, a paired difference of 0.009% — a null, on a season far too short to
-   mean anything.
+1. **Exam (held-out)** — built and tested, but **not yet run validly** (see the bug above).
+   What is verified on real data: a training run learned on the newest season and checkpointed
+   both brains, and an exam applies a trained checkpoint, records its sha256 and reports
+   `changed_before_reset: 3386`. Re-run next session with the fix in place; the earlier 12-bar
+   numbers are void and were deleted.
 2. **Reward timing** — `--reinforcement pnl|decoy|shuffled|none` all work. `pnl` is measured
    over three seasons with the busy preset: memory-on −1.464%, memory-off −1.180%, paired
    −0.284%, 1 win in 3, both behind buy & hold. `decoy`, `shuffled` and `none` have not been
@@ -28,8 +39,22 @@ Paused with a clean tree at `9ffce9c`. The two remaining exam runs (`exam-reset`
 
 **Next, in order**
 
-1. Let the machine cool, then re-run the exams at a length worth reading:
-   `BRAINS=runs/brains/train2 scripts/experiment.sh 48 4 scalper` on the desktop.
+1. Re-run the exams with the fix in place. Brains from the newest season already exist, so
+   the exam and the reset can be run directly:
+
+   ```sh
+   PY=.venv/bin/python
+   for spec in 'exam-fixed:trained:exam' 'exam-reset:reset:reset'; do
+     label=${spec%%:*}; rest=${spec#*:}; start=${rest%%:*}; kind=${rest##*:}
+     $PY -m flyvsly run --engine neural --market coinbase --bars 48 --preset scalper \
+       --kind $kind --window-offset 48 --label $label --out runs \
+       --starting gordon=$start:runs/brains/train/gordon.npz --starting warren=baseline
+   done
+   ```
+
+   The readout exam still needs `--readout models/readout.json --readout-margin 5.66`, and the
+   margin check that rejected it is fixed. On the desktop, prefer
+   `BRAINS=runs/brains/train2 scripts/experiment.sh 48 4 scalper`.
 2. Run the remaining reinforcement modes (`decoy`, `shuffled`, `none`) on the same seasons.
 3. Refit the readout from those seasons and re-run the readout exam.
 4. Commit `results/report.md` and update the README's result section with the new table.

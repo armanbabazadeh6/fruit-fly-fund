@@ -14,6 +14,7 @@ benchmarks are reported with that asymmetry stated.
 import dataclasses
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -96,6 +97,8 @@ class ArenaRules:
     # A fitted readout replaces the fixed DNp20 rule when set (see flyvsly/readout.py). The
     # same model file is used for both flies: the model is shared, the brain is not.
     readout: str | None = None
+    # On the readout's own score scale, which is log-odds and therefore not bounded by 1.
+    # `flyvsly fitreadout` reports the score percentiles so this can be chosen from data.
     readout_margin: float = 0.15
 
     def as_settings_kwargs(self, learning: bool) -> dict:
@@ -118,8 +121,11 @@ class ArenaRules:
             )
         if self.population_sample < 0:
             raise ValueError("population_sample cannot be negative")
-        if not 0 <= self.readout_margin <= 1:
-            raise ValueError("readout_margin must be between 0 and 1")
+        if not math.isfinite(self.readout_margin) or self.readout_margin <= 0:
+            raise ValueError(
+                "readout_margin must be a positive finite number on the readout's own score "
+                "scale (log-odds, so values well above 1 are normal)"
+            )
         return self
 
 
@@ -161,8 +167,11 @@ class MarketSpec:
             )
         if self.population_sample < 0:
             raise ValueError("population_sample cannot be negative")
-        if not 0 <= self.readout_margin <= 1:
-            raise ValueError("readout_margin must be between 0 and 1")
+        if not math.isfinite(self.readout_margin) or self.readout_margin <= 0:
+            raise ValueError(
+                "readout_margin must be a positive finite number on the readout's own score "
+                "scale (log-odds, so values well above 1 are normal)"
+            )
         return self
 
 

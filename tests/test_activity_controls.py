@@ -14,7 +14,7 @@ from stonkfly.neural.controller import Decoder
 
 from flyvsly.config import EXTENSION_FIELDS, PRESETS, ArenaRules
 from flyvsly.decoder import ConfigurableDecoder
-from flyvsly.fairness import arm_settings, starting_conditions
+from flyvsly.fairness import arm_settings, assert_exam_is_fair, starting_conditions
 from flyvsly.shuffle import counts, load_schedule, permute
 
 
@@ -86,6 +86,56 @@ def test_active_preset_is_busier_but_identical_for_both_flies():
     # A canary: any new extension field must be considered here, because every one of them is
     # part of the frozen protocol both flies share.
     assert set(extensions) == set(EXTENSION_FIELDS)
+
+
+def test_an_exam_that_learns_is_refused():
+    """The first exam implementation kept learning on for one fly while its label said frozen."""
+    rules = ArenaRules()
+    starting = {"gordon": "trained:/tmp/g.npz", "warren": "baseline"}
+    frozen, frozen_control = arm_settings(rules, False), arm_settings(rules, False)
+    check = assert_exam_is_fair("exam", starting, frozen, frozen_control)
+    assert check["both_frozen"] is True
+
+    learning = arm_settings(rules, True)
+    with pytest.raises(AssertionError, match="must freeze both flies"):
+        assert_exam_is_fair("exam", starting, learning, frozen_control)
+
+
+def test_an_exam_that_differs_in_anything_else_is_refused():
+    starting = {"gordon": "trained:/tmp/g.npz", "warren": "baseline"}
+    with pytest.raises(AssertionError, match="only in starting weights"):
+        assert_exam_is_fair(
+            "exam",
+            starting,
+            arm_settings(ArenaRules(decoder_threshold_hz=2), False),
+            arm_settings(ArenaRules(decoder_threshold_hz=3), False),
+        )
+
+
+def test_exam_personas_freeze_both_flies():
+    from flyvsly.arena import personas_for
+
+    for kind in ("exam", "reset"):
+        personas = personas_for(kind)
+        assert [persona["learning"] for persona in personas] == [False, False]
+        assert "frozen" in personas[0]["role_label"].lower()
+    # a competition still differs in learning, which is the whole point of it
+    assert [persona["learning"] for persona in personas_for("competition")] == [True, False]
+
+
+def test_readout_margin_is_accepted_on_the_log_odds_scale():
+    # The readout scores in log-odds, so a suggested margin from the score distribution is
+    # routinely larger than 1. Validating it as a probability rejected the model's own advice.
+    assert ArenaRules(readout_margin=5.66).validate().readout_margin == 5.66
+    with pytest.raises(ValueError, match="positive finite"):
+        ArenaRules(readout_margin=0).validate()
+    with pytest.raises(ValueError, match="positive finite"):
+        ArenaRules(readout_margin=-1).validate()
+
+
+def test_readout_margin_rejects_a_non_finite_value():
+    with pytest.raises(ValueError, match="positive finite"):
+        ArenaRules(readout_margin=float("nan")).validate()
 
 
 def test_unknown_reinforcement_mode_is_rejected():

@@ -109,6 +109,10 @@ def personas_for(kind: str) -> tuple:
     return (
         {
             **PERSONAS[0],
+            # Frozen, both of them. The persona labels said "frozen" while `learning` stayed
+            # True on the experimental arm, so the exam was still learning during the exam and
+            # the fairness block claimed otherwise. The flag is what matters, not the label.
+            "learning": False,
             "role": "experimental",
             "role_label": trained.capitalize(),
             "tagline": "Brought weights from an earlier season.",
@@ -120,6 +124,7 @@ def personas_for(kind: str) -> tuple:
         },
         {
             **PERSONAS[1],
+            "learning": False,
             "role": "control",
             "role_label": "Fresh brain, frozen",
             "tagline": "Never trained on anything.",

@@ -1,12 +1,12 @@
 # Fly vs. Fly
 
-[![CI](https://github.com/armanbabazadeh6/FruitFlyBrain/actions/workflows/ci.yml/badge.svg)](https://github.com/armanbabazadeh6/FruitFlyBrain/actions/workflows/ci.yml)
-[![Pages](https://github.com/armanbabazadeh6/FruitFlyBrain/actions/workflows/pages.yml/badge.svg)](https://armanbabazadeh6.github.io/FruitFlyBrain/)
+[![CI](https://github.com/armanbabazadeh6/fruit-fly-fund/actions/workflows/ci.yml/badge.svg)](https://github.com/armanbabazadeh6/fruit-fly-fund/actions/workflows/ci.yml)
+[![Pages](https://github.com/armanbabazadeh6/fruit-fly-fund/actions/workflows/pages.yml/badge.svg)](https://armanbabazadeh6.github.io/fruit-fly-fund/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 [![Paper trading only](https://img.shields.io/badge/trading-paper%20only-ffb454.svg)](#what-is-and-is-not-claimed)
 
-**[Watch it run](https://armanbabazadeh6.github.io/FruitFlyBrain/)** — the browser
+**[Watch it run](https://armanbabazadeh6.github.io/fruit-fly-fund/)** — the browser
 experience replays recorded neural runs with no server and no dataset. The page opens on
 the two flies at their terminals, trading.
 
