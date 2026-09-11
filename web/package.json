@@ -5,7 +5,6 @@
   "type": "module",
   "description": "Fly vs. Fly browser experience. Renders recorder telemetry only; it never invents values.",
   "scripts": {
-    "test": "node --test tests/*.test.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview --port 5180",
