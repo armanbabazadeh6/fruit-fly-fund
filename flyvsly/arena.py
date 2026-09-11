@@ -354,7 +354,12 @@ class Arena:
         season = self.season
         self._prepare_reinforcement(season)
 
-        conditions = starting_conditions(rules, config.kind, config.starting)
+        # The settings these personas actually produce, not a guessed pair.
+        on_settings = arm_settings(rules, self.personas[0]["learning"])
+        off_settings = arm_settings(rules, self.personas[1]["learning"])
+        conditions = starting_conditions(
+            rules, config.kind, config.starting, on_settings, off_settings
+        )
         if config.kind == "competition":
             assert_only_learning_differs(arm_settings(rules, True), arm_settings(rules, False))
 

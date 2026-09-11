@@ -88,6 +88,30 @@ def test_active_preset_is_busier_but_identical_for_both_flies():
     assert set(extensions) == set(EXTENSION_FIELDS)
 
 
+def test_starting_conditions_describe_the_settings_the_run_will_use():
+    """An exam reported `both_frozen: true` while the settings it was handed had learning on."""
+    from flyvsly.arena import personas_for
+
+    rules = ArenaRules()
+    starting = {"gordon": "trained:/tmp/g.npz", "warren": "baseline"}
+    personas = personas_for("exam")
+    conditions = starting_conditions(
+        rules,
+        "exam",
+        starting,
+        arm_settings(rules, personas[0]["learning"]),
+        arm_settings(rules, personas[1]["learning"]),
+    )
+    assert conditions["fairness"]["differing_fields"] == ["starting_weights"]
+    assert conditions["fairness"]["both_frozen"] is True
+
+    # Handing it the wrong settings must be refused rather than reported as frozen.
+    with pytest.raises(AssertionError, match="must freeze both flies"):
+        starting_conditions(
+            rules, "exam", starting, arm_settings(rules, True), arm_settings(rules, False)
+        )
+
+
 def test_an_exam_that_learns_is_refused():
     """The first exam implementation kept learning on for one fly while its label said frozen."""
     rules = ArenaRules()

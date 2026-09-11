@@ -109,10 +109,18 @@ def assert_exam_is_fair(kind: str, starting: dict, on=None, off=None) -> dict:
     }
 
 
-def starting_conditions(rules: ArenaRules, kind: str = "competition", starting=None) -> dict:
-    """Human- and machine-checkable statement of the shared starting line."""
-    on = arm_settings(rules, True)
-    off = arm_settings(rules, False)
+def starting_conditions(
+    rules: ArenaRules, kind: str = "competition", starting=None, on=None, off=None
+) -> dict:
+    """Human- and machine-checkable statement of the shared starting line.
+
+    `on`/`off` are the settings the run is actually going to use. Deriving them here from a
+    hardcoded learning pair was wrong for an exam, where both flies are frozen: the block then
+    described a run that was not the one being launched, and the guard in
+    `assert_exam_is_fair` rightly refused to bless it.
+    """
+    on = on if on is not None else arm_settings(rules, True)
+    off = off if off is not None else arm_settings(rules, False)
     if kind == "competition":
         check = assert_only_learning_differs(on, off)
     else:

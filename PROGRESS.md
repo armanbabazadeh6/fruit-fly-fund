@@ -9,17 +9,21 @@ Paused with a clean tree at `9ffce9c`. The two remaining exam runs (`exam-reset`
 `exam-readout`) were still going when we stopped; if they finished, `runs/` has them and
 `results/report.md` needs committing.
 
-**A bug found in the exam feature, and fixed**
+**Two bugs found in the exam feature, both fixed**
 
-The first two exam runs were invalid and their recordings have been deleted. `personas_for()`
-relabelled the experimental fly "trained brain, frozen" but left `learning=True` on it, so the
-exam kept learning *during* the exam — the opposite of the protocol — while the fairness block
-claimed `both_frozen: true`. `assert_exam_is_fair` now reads the two arms' settings instead of
-restating the intention: it raises if either arm can learn, and if the settings differ in
-anything but the starting weights. Both cases are tested, along with the personas themselves.
+1. `personas_for()` relabelled the experimental fly "trained brain, frozen" but left
+   `learning=True` on it, so the exam learned *during* the exam — the opposite of the protocol —
+   while the recording claimed `both_frozen: true`. That is the worst failure mode this project
+   has: a recording asserting a property its run did not have. Both exam personas now freeze
+   both flies, and `assert_exam_is_fair` inspects the arms' settings instead of restating the
+   intention: it raises if either arm can learn, or if anything but the starting weights differs.
+2. `starting_conditions()` built its comparison from a hardcoded learning pair rather than the
+   settings the run would use, so an exam described a run that was not the one being launched.
+   The guard from fix (1) caught this immediately on the next attempt and refused to start the
+   run — which is what a guard is for. The arena now passes the settings its personas produce.
 
-Nothing from those runs is reported anywhere. The exam feature needs one re-run, which is a
-single command.
+Both are tested, including the case where the wrong settings are handed in. The two invalid
+recordings were deleted rather than reported.
 
 **Where the three requested features stand**
 
