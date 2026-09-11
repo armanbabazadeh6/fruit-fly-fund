@@ -169,6 +169,21 @@ flyvsly prepare              # ~1.1 GB download, 69 s and 1.33 GB peak RSS on an
 flyvsly doctor --measure     # what this machine can actually run
 ```
 
+### Windows, without installing a WSL distro
+
+The engine loads `libmemory.so`, so it is Linux-only, and `wsl --install` wants an
+administrator and usually a reboot. Docker Desktop's engine is already a Linux VM, so the
+same commands run in a container with no elevation and no reboot:
+
+```sh
+docker build -t flyvsly-nn -f docker/Dockerfile .
+docker run --rm -v "$PWD:/work" -w /work flyvsly-nn \
+  bash -lc 'pip install -e . && flyvsly prepare && flyvsly doctor --measure'
+```
+
+`data/` and `runs/` are bind-mounted from the host and already git-ignored, so the 1.6 GB
+graph and every recording survive between containers.
+
 Run the competition, paper only:
 
 ```sh
