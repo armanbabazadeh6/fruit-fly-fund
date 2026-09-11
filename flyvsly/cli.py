@@ -406,20 +406,41 @@ def cmd_fitreadout(args):
     from .readout import fit
     from .report import load_manifests
 
-    manifests = [
+    wanted = set(args.label)
+    candidates = [
         manifest
         for manifest in load_manifests(args.runs)
-        if manifest["run"].get("label") == args.label
+        if manifest["run"].get("label") in wanted
     ]
-    if not manifests:
-        print(f"no recordings labelled {args.label!r} under {args.runs}", file=sys.stderr)
+    if not candidates:
+        print(f"no recordings labelled {sorted(wanted)} under {args.runs}", file=sys.stderr)
         return 2
+
+    # One recording per (market season, fly, starting weights). The same brain on the same
+    # market produces identical rows, so pooling repeats of an experiment puts copies of the
+    # holdout into the training set — which showed up as a perfect holdout, i.e. leakage
+    # dressed as a result. Newest recording per group wins.
+    groups: dict[tuple, dict] = {}
+    duplicates = []
+    for manifest in candidates:
+        recording = json.loads((Path(manifest["path"]) / "recording.json").read_text())
+        arm_meta = next((a for a in recording["arms"] if a["id"] == args.arm), None)
+        if arm_meta is None:
+            continue
+        starting = (arm_meta.get("starting_weights") or {}).get("label") or "baseline"
+        key = (recording["run"]["season"], args.arm, starting)
+        if key in groups:
+            duplicates.append(recording["run"]["id"])
+        groups[key] = recording
 
     vectors: list[list[int]] = []
     closes: list[float] = []
     used = []
-    for manifest in sorted(manifests, key=lambda m: m["run"].get("created", 0)):
-        recording = json.loads((Path(manifest["path"]) / "recording.json").read_text())
+    # Chronological by the season's own first bar, so the temporal split inside the fit is a
+    # split in market time rather than in file order.
+    for key, recording in sorted(
+        groups.items(), key=lambda item: item[1]["season"]["bars"][0]["t"]
+    ):
         bars = recording["season"]["bars"]
         season_vectors, season_closes = [], []
         for observation in recording["observations"]:
@@ -435,7 +456,14 @@ def cmd_fitreadout(args):
         # sample, and exactly the kind of leak this experiment exists to avoid.
         vectors.extend(season_vectors[: -args.horizon])
         closes.extend(season_closes[: -args.horizon])
-        used.append({"run": recording["run"]["id"], "bars": len(season_vectors)})
+        used.append(
+            {
+                "run": recording["run"]["id"],
+                "season": recording["run"]["season"],
+                "starting_weights": key[2],
+                "bars": len(season_vectors),
+            }
+        )
 
     if len(vectors) < args.minimum_bars:
         print(
@@ -445,11 +473,14 @@ def cmd_fitreadout(args):
         )
         return 2
 
-    model = fit(vectors, closes, horizon=args.horizon, trained_on=f"{args.label}:{args.arm}")
+    model = fit(vectors, closes, horizon=args.horizon, trained_on=f"{'+'.join(sorted(wanted))}:{args.arm}")
     model.save(Path(args.out))
     description = model.describe()
     description["fitted_on"] = used
     description["usable_bars"] = len(vectors)
+    description["distinct_seasons"] = len(used)
+    if duplicates:
+        description["skipped_as_repeated_experiments"] = duplicates
 
     # The margin decides how often the readout acts, so it should come from the score
     # distribution rather than from a guess. Reported here; chosen when the run is launched.
@@ -473,6 +504,11 @@ def cmd_fitreadout(args):
         )
     if train.get("accuracy", 0) >= 0.999:
         warnings.append("training accuracy is 1.0, which means the model memorised the bars")
+    if len(used) < 2:
+        warnings.append(
+            "fewer than two distinct seasons: the holdout comes from the same market as the "
+            "training data, so it is not an out-of-sample test"
+        )
     if holdout.get("bars", 0) < 30:
         warnings.append(
             f"the holdout is {holdout.get('bars')} bars, far too few to tell a signal from noise"
@@ -629,7 +665,14 @@ def main(argv=None):
         "fitreadout", help="fit a readout model from recorded population vectors"
     )
     fitreadout.add_argument("--runs", default="runs")
-    fitreadout.add_argument("--label", required=True, help="label of the training recordings")
+    fitreadout.add_argument(
+        "--label",
+        required=True,
+        # Repeatable: the readout pools every recording that has population vectors, which is
+        # how a fit gets more bars than the ~35 that a single season can offer.
+        action="append",
+        help="label of a recording to train on; repeat to pool several",
+    )
     fitreadout.add_argument("--arm", default="warren", help="arm whose activity trains the model")
     fitreadout.add_argument("--out", default="models/readout.json")
     fitreadout.add_argument("--horizon", type=int, default=1, help="bars ahead to predict")

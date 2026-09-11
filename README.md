@@ -48,6 +48,39 @@ to a plain buy-and-hold, and fees plus the inability to short dominate everythin
 That is the honest state of it, and three seasons is far too few to conclude anything
 either way: reproduce it with `--repeats 6` and more bars before reading the mean.
 
+### The held-out exam: it does not generalise
+
+The comparison above grades the fly on the same market it learned on. The exam separates them:
+learn on one real season, then **freeze both flies** and run a season neither has seen. Nothing
+is learned during an exam, so the only difference between the two is the brain each one carried
+in. Both are frozen, both face the same 48 unseen minutes, both pay the same fees.
+
+| run | memory-on | memory-off | paired | buy & hold |
+| --- | --- | --- | --- | --- |
+| training season (learned on it) | −0.900% | −0.935% | **+0.035%** | −0.933% |
+| **exam, unseen season** | −0.616% | −0.513% | **−0.104%** | −0.706% |
+| **reset control** (learned efficacies wiped) | −0.500% | −0.513% | **+0.012%** | −0.706% |
+| exam decided by the fitted readout | −0.068% | −0.194% | +0.127% | −0.706% |
+
+Three things to read out of that:
+
+1. **The advantage did not survive the exam.** Memory-on beat memory-off by +0.035% on the
+   season it learned on, then lost by −0.104% on a season it had never seen. That is what
+   overfitting to one market path looks like.
+2. **The reset control behaves exactly as it must.** Wiping the 3,386 learned efficacies
+   returns the fly to the baseline fly (+0.012%, within noise of identical) — so the weights
+   really are the only thing the memory rule carries, and they really are worth about nothing
+   on this window.
+3. **The readout's apparent win is exactly the trap it warns about.** Deciding from a model
+   fitted on the fly's own spikes gave memory-on +0.127%; the same model's own holdout accuracy
+   is 0.583 against a base rate of 0.583, i.e. **no better than guessing**. A meaningless model
+   producing a good-looking number on one paired season is the reason single seasons are not
+   evidence.
+
+All four differences are fractions of a percent, on one season, against 42–46 fills each paying
+0.6%. One unseen season settles nothing on its own — but it is the shape of the answer, and it
+is the opposite of the training result.
+
 ![The trading floor](docs/screenshot-floor.png)
 
 Two toggles sit in the floor header: **trade cam** eases the camera to whichever fly just
