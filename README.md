@@ -1,5 +1,20 @@
 # Fly vs. Fly
 
+### Trading lab visual update
+
+The floor now includes full-fly close-ups, articulated forelegs that reach the keyboard,
+warm chitin materials, architectural lighting, and a **Brain scan** toggle. Brain scan
+shows six measured signal groups (left/right DNp20, KC, reward DAN, gate, aversive DAN).
+The floating clusters, connecting paths, and pulse timing are schematic; they are not
+anatomical neuron coordinates or individual spike events. Exact recorded values appear
+under the floor. Procedural recordings explicitly show no neural measurements.
+
+**Enter the stock sandbox** opens AAPL, NVDA, and TSLA with deterministic fictional prices
+and two programmed paper strategies (momentum and mean reversion). Each account starts
+with $100, spends at most $10 per fill, and pays 0.6% fees. This browser sandbox is not
+a neural experiment or a live stock feed. The original BTC-USDC neural recordings remain
+available through **Neural recordings**. Run `cd web && npm test` for accounting checks.
+
 [![CI](https://github.com/armanbabazadeh6/fruit-fly-fund/actions/workflows/ci.yml/badge.svg)](https://github.com/armanbabazadeh6/fruit-fly-fund/actions/workflows/ci.yml)
 [![Pages](https://github.com/armanbabazadeh6/fruit-fly-fund/actions/workflows/pages.yml/badge.svg)](https://armanbabazadeh6.github.io/fruit-fly-fund/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

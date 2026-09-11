@@ -10,6 +10,7 @@
  */
 
 import * as THREE from 'three'
+import { buildBrain } from './brain'
 
 export interface FlyParts {
   root: THREE.Group
@@ -22,6 +23,8 @@ export interface FlyParts {
   /** World-space tips of the typing arms, for checking they are over the keys. */
   typingTips: THREE.Object3D[]
   deskLegs: THREE.Group[]
+  brain: ReturnType<typeof buildBrain>
+  head: THREE.Mesh
 }
 
 export interface KeyboardParts {
@@ -162,8 +165,8 @@ export function buildFly(accent: string): FlyParts {
   if (!wingPlane) wingPlane = new THREE.PlaneGeometry(1.3, 0.58, 1, 1)
 
   const bodyGroup = new THREE.Group()
-  const shell = standard(0x9aa5b2, { map: body, roughness: 0.42 })
-  const shellDark = standard(0x6b7480, { map: body, roughness: 0.5 })
+  const shell = standard(0x967142, { map: body, roughness: 0.48, metalness: .22 })
+  const shellDark = standard(0x5b3e24, { map: body, roughness: 0.5, metalness: .18 })
   const eyeColor = new THREE.Color(accent).lerp(new THREE.Color(0xb0182f), 0.6)
   const eyeMaterial = new THREE.MeshStandardMaterial({
     color: eyeColor,
@@ -186,7 +189,7 @@ export function buildFly(accent: string): FlyParts {
   for (let i = 0; i < 3; i += 1) {
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.5 - i * 0.06, 0.022, 8, 26), chitin)
     ring.position.set(0, 0.5, -0.52 - i * 0.28)
-    ring.rotation.y = Math.PI / 2
+    ring.rotation.y = 0
     ring.scale.set(1.28, 0.9, 1)
     bodyGroup.add(ring)
   }
@@ -204,6 +207,9 @@ export function buildFly(accent: string): FlyParts {
   head.scale.set(1, 0.95, 0.92)
   head.position.set(0, 0.66, 0.62)
   bodyGroup.add(head)
+  const brain = buildBrain()
+  brain.root.position.set(0, 1.58, .62)
+  bodyGroup.add(brain.root)
 
   const eyes: THREE.Mesh[] = []
   for (const side of [-1, 1]) {
@@ -303,6 +309,11 @@ export function buildFly(accent: string): FlyParts {
     const tip = new THREE.Object3D()
     tip.position.set(side * 0.035, -0.575, 0.05)
     shoulder.add(upper, forearm, tarsus, tip)
+    for (const y of [-.25,-.48]) {
+      const joint = new THREE.Mesh(new THREE.SphereGeometry(.04,10,8),chitin)
+      joint.position.y=y
+      shoulder.add(joint)
+    }
     bodyGroup.add(shoulder)
     typingArms.push(shoulder)
     typingTips.push(tip)
@@ -342,6 +353,8 @@ export function buildFly(accent: string): FlyParts {
     typingArms,
     typingTips,
     deskLegs,
+    brain,
+    head,
   }
 }
 
@@ -385,7 +398,7 @@ export interface TerminalParts {
 }
 
 /** A Bloomberg-style terminal: amber monospace on black, drawn to a canvas texture. */
-export function buildTerminal(width = 768, height = 448) {
+export function buildTerminal(width = 1024, height = 608) {
   const group = new THREE.Group()
 
   const shell = standard(0x1b1f26, { roughness: 0.62, metalness: 0.35 })

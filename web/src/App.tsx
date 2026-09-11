@@ -25,6 +25,7 @@ import {
 import { asRecording, type LiveRun } from './lib/live'
 import type { Observation, Recording, ReportGroup, Source } from './lib/types'
 import './App.css'
+import { StockSandbox } from './components/StockSandbox'
 
 const DEFAULT_RULES: Record<string, string | number> = {
   capital: '100',
@@ -57,6 +58,7 @@ function sourceFor(recording: Recording, mode: 'recorded' | 'demo'): Source {
 }
 
 export default function App() {
+  const [sandbox,setSandbox]=useState(false)
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [recording, setRecording] = useState<Recording | null>(null)
   const [live, setLive] = useState<LiveRun | null>(null)
@@ -69,7 +71,7 @@ export default function App() {
   const [index, setIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const introPlayed = useRef(false)
-  const [speed, setSpeed] = useState(3)
+  const [speed, setSpeed] = useState(1)
   const [connected, setConnected] = useState(false)
   const [running, setRunning] = useState(false)
   const [starting, setStarting] = useState(false)
@@ -297,6 +299,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (sandbox) return
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return
       if (event.key === 'ArrowRight') step(1)
       if (event.key === 'ArrowLeft') step(-1)
@@ -307,7 +310,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [step])
+  }, [step, sandbox])
 
   if (!shown || shown.arms.length < 2) {
     return (
@@ -340,6 +343,8 @@ export default function App() {
     })),
   )
   const firstTimestamp = observations[0]?.t ?? firstBarT
+
+  if(sandbox) return <StockSandbox arms={arms} onClose={()=>setSandbox(false)}/>
 
   return (
     <div className="app">
@@ -376,6 +381,12 @@ export default function App() {
       />
 
       <main className="app-main">
+        <section className="lab-intro">
+          <div><p className="eyebrow">FRUIT FLY FUND / EXPERIMENT 001</p>
+          <h1>Small brains.<br /><em>Big market energy.</em></h1>
+          <p>Two fruit flies. One trading floor. Watch a neural experiment unfold, one decision at a time.</p><button className="sandbox-launch" onClick={()=>{setPlaying(false);setSandbox(true)}}>Enter the stock sandbox ↗</button></div>
+          <div className="lab-stamp"><span className="lab-orbit">◉</span><strong>166,700</strong><span>NEURONS PER TRADER</span><small>MaleCNS v1.0 · Paper trading</small></div>
+        </section>
         {error && (
           <p className="app-error chip chip-bad">
             {error}
@@ -394,7 +405,7 @@ export default function App() {
               setPlaying(false)
               setIndex(value)
             }}
-            onPlayToggle={() => setPlaying((value) => !value)}
+            onPlayToggle={() => { if (!playing && index >= bars - 1) setIndex(0); setPlaying((value) => !value) }}
             onStep={step}
             speed={speed}
             onSpeed={setSpeed}

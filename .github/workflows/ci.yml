@@ -37,4 +37,5 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npx tsc --noEmit
+      - run: npm test
       - run: npm run build

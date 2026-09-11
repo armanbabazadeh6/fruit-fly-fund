@@ -85,6 +85,8 @@ export function TradingFloor({
   const [loading, setLoading] = useState(true)
   const [pixel, setPixel] = useState(false)
   const [tradeCam, setTradeCam] = useState(false)
+  const [brain, setBrain] = useState(false)
+  const [view, setView] = useState<'floor' | 'gordon' | 'warren'>('floor')
 
   const observation = observations[index] ?? null
   const mid = seasonBars[index]?.mid ?? 0
@@ -143,6 +145,7 @@ export function TradingFloor({
         signalLine,
         memoryLine,
         neural: entry?.signal ? isNeural(entry.signal) : engine === 'neural',
+        brainActivity: isNeural(entry?.signal) ? [entry.signal.left_hz,entry.signal.right_hz,entry.signal.KC_spikes,entry.signal.reward_spikes,entry.signal.gate_spikes,entry.signal.aversive_spikes] : [],
         halted: Boolean(entry?.portfolio.halted),
         trades: events,
         lastFill,
@@ -206,20 +209,24 @@ export function TradingFloor({
   const lastTrades = useMemo(() => {
     const rows: string[] = []
     for (const arm of arms) {
-      for (const trade of (summaries[arm.id]?.trades ?? []).slice(-3)) {
+      for (const trade of (summaries[arm.id]?.trades ?? []).filter(trade => trade.i <= index).slice(-3)) {
         rows.push(
           `${arm.name.split(' ')[0].toUpperCase()} ${trade.side} ${trade.base_size} @ ${usd(trade.price)} fee ${usd(trade.fee, 4)}`,
         )
       }
     }
-    return rows.length ? rows : ['NO FILLS RECORDED IN THIS SEASON']
-  }, [arms, summaries])
+    return rows.length ? rows : ['NO FILLS YET AT THIS BAR']
+  }, [arms, summaries, index])
 
   return (
     <section className="panel floor">
       <div className="panel-head">
-        <span className="panel-title">The trading floor</span>
+        <span className="panel-title">01 / The trading floor</span>
         <span className="floor-head-chips">
+          {!fallback && <>
+            {(['floor','gordon','warren'] as const).map(camera => <button key={camera} type="button" className={`chip floor-mode ${view===camera?'is-on':''}`} aria-pressed={view===camera} onClick={()=>{setView(camera);floorRef.current?.setView(camera)}}>{camera==='floor'?'Full floor':camera==='gordon'?'Gordon close-up':'Warren close-up'}</button>)}
+            <button type="button" className={`chip floor-mode ${brain?'is-on':''}`} aria-pressed={brain} onClick={()=>{setBrain(!brain);floorRef.current?.setBrainMode(!brain)}}>◉ Brain scan {brain?'on':'off'}</button>
+          </>}
           {!fallback && (
             <button
               type="button"
@@ -268,7 +275,6 @@ export function TradingFloor({
 
       <div className="floor-readouts">
         {arms.map((arm) => {
-          const summary = summaries[arm.id]
           const entry = observation?.arms?.[arm.id] ?? null
           return (
             <div className="floor-readout" key={arm.id} style={{ '--accent': arm.accent } as React.CSSProperties}>
@@ -305,7 +311,7 @@ export function TradingFloor({
               <span className="floor-pair num floor-minor">
                 <span className="floor-pair-label">fills / vetoes / fees</span>
                 <span>
-                  {summary?.fills ?? 0} / {summary?.vetoes ?? 0} / {usd(summary?.fees_paid ?? '0', 3)}
+                  {entry?.portfolio.fills ?? 0} / {entry?.portfolio.vetoes ?? 0} / {usd(entry?.portfolio.fees_paid ?? '0', 3)}
                 </span>
               </span>
               {/* In 8-bit mode the screens are decorative, so the trade that just happened is
@@ -364,6 +370,16 @@ export function TradingFloor({
           above and in the panels below.
         </p>
       )}
+
+      {brain && <section className="brain-inspector" aria-label="Neural activity inspector">
+        <div className="brain-caption"><span className="eyebrow">02 / INSIDE THE MIND</span><h2>Every decision starts <br/>with a spark.</h2><p>Measured activity, schematic anatomy. Each glowing cluster represents a recorded signal group; paths and pulses illustrate activity, not individual neuron locations or spike timing.</p></div>
+        {arms.map(arm=> {
+          const signal=observation?.arms[arm.id]?.signal
+          if(!isNeural(signal)) return <div className="brain-stats" key={arm.id}><h3>{arm.name}</h3><p>No neural measurements in this procedural recording.</p></div>
+          const values=[['Left DNp20',signal.left_hz,'Hz'],['Right DNp20',signal.right_hz,'Hz'],['Kenyon cells',signal.KC_spikes,'spikes'],['Reward DAN',signal.reward_spikes,'spikes'],['Gate DNpe017',signal.gate_spikes,'spikes'],['Aversive DAN',signal.aversive_spikes,'spikes']] as const
+          return <div className="brain-stats" key={arm.id}><h3>{arm.name}<span>{signal.total_spikes.toLocaleString()} total spikes</span></h3>{values.map(([name,value,unit],i)=><div className="brain-signal" key={name} style={{'--signal-color':['#64dfff','#64dfff','#c7e8ad','#ffb454','#cc9eff','#ff7793'][i]} as React.CSSProperties}><span>{name}</span><div><i style={{width:`${Math.min(100,Math.log1p(value)/Math.log(101)*100)}%`}}/></div><strong>{value.toLocaleString()} <small>{unit}</small></strong></div>)}<p>{signal.memory.enabled?`${signal.memory.changed_edges?.toLocaleString() ?? 0} memory connections changed`:'Memory connections frozen'} · {signal.seconds}s observation</p></div>
+        })}
+      </section>}
 
       <div className="floor-ticker" aria-label="Tape">
         <span className="floor-ticker-product num">{product}</span>

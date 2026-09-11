@@ -1,0 +1,49 @@
+:root { --bg:#090e0e; --panel:#101819; --panel-2:#131d1e; --panel-3:#1c2829; --line:#273334; --line-2:#354545; --ink:#f1f1df; --ink-2:#bdc9c4; --ink-3:#90a5a0; --radius:14px; }
+.topbar { position:relative; background:#0d1515; padding:18px 28px; }
+.brand-name { font-size:23px; letter-spacing:-.06em; }
+.brand-sub { font:9px var(--font-num); letter-spacing:.13em; margin-top:4px; }
+.source-detail { display:none; }
+.app-main { max-width:1530px; padding:20px 30px 48px; gap:20px; }
+.floor { border-color:#405352; box-shadow:0 22px 70px #0005; }
+.floor>.panel-head { padding:15px 20px; align-items:center; background:#152021; }
+.floor-stage { height:570px; }
+.floor-readouts { background:#101a1b; }
+.floor-readout { padding:16px 20px; }
+.floor-readout .floor-minor { display:none; }
+.floor-mode { padding:7px 11px; border-radius:6px; font-size:10px; letter-spacing:.02em; }
+.floor-mode.is-on { background:#c7e8ad; color:#142018; border-color:#c7e8ad; }
+.floor-ticker { padding:14px 20px; background:#152021; }
+.brain-inspector { display:grid; grid-template-columns:1fr 1fr 1fr; gap:32px; padding:30px; background:radial-gradient(ellipse at top left,#193234,#10191c 70%); border-top:1px solid #395452; }
+.brain-caption h2 { font-size:28px; font-weight:450; line-height:1.13; letter-spacing:-.045em; margin:14px 0; }
+.brain-caption p,.brain-stats p { font-size:11px; color:var(--ink-3); line-height:1.7; }
+.brain-stats h3 { font-size:14px; margin:0 0 22px; }
+.brain-stats h3 span { display:block; color:#c7e8ad; font:10px var(--font-num); margin-top:7px; }
+.brain-signal { display:grid; grid-template-columns:104px 1fr 80px; gap:10px; align-items:center; margin:12px 0; font-size:11px; }
+.brain-signal>div { background:#ffffff09; height:3px; }
+.brain-signal i { display:block; height:3px; background:var(--signal-color); box-shadow:0 0 9px var(--signal-color); transition:width .3s; }
+.brain-signal strong { text-align:right; font:11px var(--font-num); color:var(--signal-color); }
+.brain-signal small { font-size:8px; color:var(--ink-3); }
+button:focus-visible,select:focus-visible { outline:2px solid #c7e8ad; outline-offset:4px; }
+@media(max-width:900px) { .brain-inspector { grid-template-columns:1fr 1fr; padding:20px; gap:20px; }.brain-caption { grid-column:1/-1; }.brain-caption h2 br { display:none; }.floor-stage { height:460px; }.floor-readouts { grid-template-columns:1fr 1fr; }.floor-readout { padding:12px; }.floor-readout>.chip,.floor-pair { font-size:10px; }.topbar { padding:16px; }.app-main { padding:16px; } }
+@media(max-width:600px) { .brain-inspector { grid-template-columns:1fr; }.floor-readouts { grid-template-columns:1fr; }.floor-stage { height:360px; }.floor>.panel-head { flex-direction:column; align-items:flex-start; }.floor-name { font-size:13px; }.floor-ticker { padding:12px; }.fact-chips { margin:0; }.lab-intro h1 { font-size:43px; } }
+.sandbox-launch { padding:13px 20px; background:#c7e8ad; color:#172519; border:0; border-radius:6px; cursor:pointer; margin-top:12px; font-size:12px; font-weight:650; }
+.sandbox-header,.sandbox-controls { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:15px; }
+.sandbox-header { padding:22px 30px; border-bottom:1px solid var(--line); }.sandbox-header strong { font-size:24px; letter-spacing:-.06em; }
+.sandbox-controls>div { display:flex; gap:8px; flex-wrap:wrap; }
+@media(max-width:650px) {
+  .transport { flex-wrap:wrap; border-radius:12px; width:100%; padding:10px; }
+  .transport-scrub { min-width:80px; }
+  .transport-readout { flex-basis:calc(100% - 135px); font-size:10px; }
+  .transport-speeds { margin-left:auto; }
+  .panel-head { flex-wrap:wrap; }
+  .topbar-controls { flex-wrap:wrap; min-width:0; }
+  .pick,.pick-select { max-width:100%; min-width:0; }
+  .fact-chips .chip { white-space:normal; }
+  .th-heads { grid-template-columns:1fr; }
+  .sandbox-header { padding:18px 16px; }
+}
+@media(max-width:650px) {
+  .charts-row>*,.explain-row>*,.telemetry-row>* { min-width:0; }
+  .dx .chip { white-space:normal; overflow-wrap:anywhere; }
+  .dx-body { overflow-wrap:anywhere; }
+}

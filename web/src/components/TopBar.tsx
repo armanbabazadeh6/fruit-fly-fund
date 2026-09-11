@@ -41,9 +41,9 @@ export function TopBar({
           🪰
         </span>
         <span>
-          <span className="brand-name">Fly vs. Fly</span>
+          <span className="brand-name">fruit fly fund<span style={{color:'#c7e8ad'}}>®</span></span>
           <span className="brand-sub">
-            two MaleCNS flies · one paper market · memory updates the only difference
+            THE SMALLEST DESK ON WALL STREET
           </span>
         </span>
       </div>

@@ -173,7 +173,7 @@ export function EquityChart({
               );
             })}
 
-          {[0, Math.floor((shown - 1) / 2), shown - 1].map((index) => (
+          {[...new Set([0, Math.floor((shown - 1) / 2), shown - 1])].map((index) => (
             <text key={index} x={x(index)} y={HEIGHT - 8} textAnchor="middle" className="equity-tick num">
               bar {index + 1}
             </text>

@@ -33,7 +33,7 @@ export function PriceChart({
   visibleBars,
 }: PriceChartProps) {
   const [ref, width] = useMeasuredWidth<HTMLDivElement>()
-  const shown = Math.max(2, Math.min(mids.length || 2, visibleBars ?? mids.length ?? 2))
+  const shown = Math.max(1, Math.min(mids.length || 1, visibleBars ?? mids.length ?? 1))
   const values = mids.length ? mids.slice(0, shown) : [0, 0]
   const [low, high] = paddedExtent(values, 0.12)
   const plotWidth = Math.max(80, width - PAD.left - PAD.right)
@@ -51,7 +51,7 @@ export function PriceChart({
       <div className="panel-head">
         <span className="panel-title">{product} · mid price per bar</span>
         <span className="panel-sub num">
-          {usd(current)} USDC{' '}
+          {usd(current)} {product.split('-').at(-1) ?? 'USD'}{' '}
           <span className={changePct >= 0 ? 'up' : 'down'}>
             {changePct >= 0 ? '+' : '−'}
             {Math.abs(changePct).toFixed(3)}%
@@ -86,7 +86,7 @@ export function PriceChart({
             strokeWidth="1"
           />
           <circle cx={markerX} cy={y(current)} r="3" fill="var(--amber)" stroke="var(--bg)" strokeWidth="1.3" />
-          {[0, shown - 1].map((index) => (
+          {[...new Set([0, shown - 1])].map((index) => (
             <text
               key={index}
               x={x(index)}

@@ -10,6 +10,8 @@
  */
 
 import * as THREE from 'three'
+import { buildOffice } from './office'
+import { drawTerminal } from './terminal'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 
 import type { FlyMood } from '../lib/types'
@@ -45,6 +47,7 @@ export interface FloorArmState {
   signalLine: string
   memoryLine: string
   neural: boolean
+  brainActivity?: number[]
   halted: boolean
   /** Most recent fills at or before the current bar, newest first, for the desk tape. */
   trades: { side: string; label: string }[]
@@ -90,6 +93,8 @@ export interface FloorHandle {
   setPixelMode(enabled: boolean): void
   setTradeCam(enabled: boolean): void
   setPaused(paused: boolean): void
+  setBrainMode(enabled: boolean): void
+  setView(view: 'floor' | 'gordon' | 'warren'): void
   diagnostics(): Record<string, unknown>
   dispose(): void
 }
@@ -121,201 +126,6 @@ function gridTexture(): THREE.CanvasTexture {
   return texture
 }
 
-function drawTerminal(
-  terminal: TerminalParts,
-  arm: FloorArmState,
-  state: FloorState,
-  time: number,
-  flash: number,
-) {
-  const context = terminal.canvas.getContext('2d')
-  if (!context) return
-  const { width, height } = terminal.canvas
-  const accent = arm.accent
-  const amber = '#ffb454'
-  const dim = '#6b7f94'
-  const ink = '#dbe7f3'
-  const green = '#5ad9a4'
-  const red = '#ff6b81'
-  const mono = '13px ui-monospace, SFMono-Regular, Menlo, monospace'
-  const trade = arm.lastFill
-
-  context.fillStyle = '#05080c'
-  context.fillRect(0, 0, width, height)
-
-  // Header
-  context.fillStyle = '#0e1620'
-  context.fillRect(0, 0, width, 34)
-  context.fillStyle = accent
-  context.fillRect(0, 0, 4, 34)
-  context.font = 'bold 17px ui-monospace, SFMono-Regular, Menlo, monospace'
-  context.fillStyle = accent
-  context.fillText(arm.name.toUpperCase(), 16, 23)
-  context.font = '12px ui-monospace, SFMono-Regular, Menlo, monospace'
-  context.fillStyle = dim
-  context.fillText(arm.roleLabel.toUpperCase(), 262, 23)
-  context.fillStyle = state.live ? green : dim
-  context.fillText(state.live ? 'LIVE' : 'RECORDED', width - 100, 23)
-
-  // The band that changes when the fly trades: green fill, red veto, amber wait.
-  const bandColour = arm.exec === 'FILLED' ? green : arm.exec === 'VETO' || arm.exec === 'BLOCKED' ? red : '#3d4855'
-  context.fillStyle = bandColour
-  context.globalAlpha = 0.9
-  context.fillRect(0, 34, width, 42)
-  context.globalAlpha = 1
-  context.font = 'bold 20px ui-monospace, SFMono-Regular, Menlo, monospace'
-  context.fillStyle = '#05080c'
-  const headline = trade
-    ? `${trade.side} FILLED · ${trade.base} @ ${trade.price}`
-    : arm.exec === 'VETO'
-      ? `${arm.side} VETOED · ${(arm.reason || 'guard refused').slice(0, 44)}`
-      : arm.side === 'HOLD'
-        ? 'HOLD · NO ORDER THIS BAR'
-        : `${arm.side} ${arm.exec}`
-  context.fillText(headline.slice(0, 62), 14, 61)
-
-  // Equity + return
-  context.font = 'bold 32px ui-monospace, SFMono-Regular, Menlo, monospace'
-  context.fillStyle = ink
-  context.fillText(arm.equity.toFixed(2), 16, 108)
-  context.font = 'bold 16px ui-monospace, SFMono-Regular, Menlo, monospace'
-  context.fillStyle = arm.returnPct >= 0 ? green : red
-  context.fillText(`${arm.returnPct >= 0 ? '+' : '−'}${Math.abs(arm.returnPct).toFixed(3)}%`, 150, 108)
-  context.font = mono
-  context.fillStyle = dim
-  context.fillText(`start ${state.initialCapital.toFixed(2)}`, 268, 107)
-
-  // Equity curve, scaled to its own range
-  const plot = { x: 16, y: 122, w: width - 210, h: 96 }
-  context.strokeStyle = 'rgba(120, 150, 185, 0.18)'
-  context.lineWidth = 1
-  context.strokeRect(plot.x, plot.y, plot.w, plot.h)
-  const values = arm.curve.length ? arm.curve : [state.initialCapital]
-  if (values.length > 1) {
-    const low = Math.min(...values, state.initialCapital)
-    const high = Math.max(...values, state.initialCapital)
-    const span = high - low || 1
-    const xOf = (i: number) => plot.x + (i / (values.length - 1)) * plot.w
-    const yOf = (v: number) => plot.y + plot.h - ((v - low) / span) * plot.h
-    context.setLineDash([3, 3])
-    context.strokeStyle = 'rgba(160, 180, 205, 0.4)'
-    context.beginPath()
-    context.moveTo(plot.x, yOf(state.initialCapital))
-    context.lineTo(plot.x + plot.w, yOf(state.initialCapital))
-    context.stroke()
-    context.setLineDash([])
-    context.strokeStyle = accent
-    context.lineWidth = 2
-    context.beginPath()
-    values.forEach((value, i) => (i ? context.lineTo(xOf(i), yOf(value)) : context.moveTo(xOf(i), yOf(value))))
-    context.stroke()
-    const last = values.length - 1
-    context.fillStyle = accent
-    context.beginPath()
-    context.arc(xOf(last), yOf(values[last]), 3.5, 0, Math.PI * 2)
-    context.fill()
-    // Where the last trade landed on the curve.
-    if (trade && trade.i >= 0 && trade.i < values.length) {
-      context.beginPath()
-      context.arc(xOf(trade.i), yOf(values[trade.i]), 3, 0, Math.PI * 2)
-      context.fillStyle = green
-      context.fill()
-    }
-  } else {
-    context.fillStyle = dim
-    context.font = mono
-    context.fillText('waiting for the first bar', plot.x + 8, plot.y + plot.h / 2)
-  }
-
-  // This fly's own tape: the last few things it did, newest first.
-  const tapeX = plot.x + plot.w + 14
-  context.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace'
-  context.fillStyle = dim
-  context.fillText('ITS OWN TAPE', tapeX, plot.y + 10)
-  arm.trades.slice(0, 6).forEach((entry, index) => {
-    const y = plot.y + 30 + index * 15
-    const filled = entry.side === 'BUY' || entry.side === 'SELL'
-    context.fillStyle = filled ? (entry.side === 'BUY' ? green : red) : '#3d4855'
-    context.fillText(entry.label.slice(0, 22), tapeX, y)
-  })
-
-  // Ledger rows
-  const rows: [string, string][] = [
-    ['SIDE', arm.side],
-    ['EXEC', arm.exec],
-    ['FILLS', String(arm.fills)],
-    ['VETOES', String(arm.vetoes)],
-    ['FEES', Number(arm.fees).toFixed(4)],
-    ['BAR', `${state.bar + 1}/${state.bars}`],
-    ['MID', state.mid.toFixed(2)],
-    [arm.neural ? 'SIGNAL' : 'SCORE', arm.signalLine],
-  ]
-  const top = plot.y + plot.h + 22
-  context.font = mono
-  rows.forEach(([label, value], index) => {
-    const column = index % 4
-    const row = Math.floor(index / 4)
-    const x = 16 + column * ((width - 32) / 4)
-    const y = top + row * 32
-    context.fillStyle = dim
-    context.fillText(label, x, y)
-    context.font = 'bold 15px ui-monospace, SFMono-Regular, Menlo, monospace'
-    context.fillStyle =
-      label === 'SIDE'
-        ? accent
-        : label === 'EXEC'
-          ? value === 'FILLED'
-            ? green
-            : value === 'VETO' || value === 'BLOCKED'
-              ? red
-              : ink
-          : ink
-    context.fillText(value.slice(0, 16), x, y + 16)
-    context.font = mono
-  })
-
-  const memoryY = top + 76
-  context.fillStyle = '#0e1620'
-  context.fillRect(12, memoryY - 14, width - 24, 26)
-  context.fillStyle = arm.learning ? amber : dim
-  context.fillText(arm.learning ? 'MEMORY UPDATES ON' : 'MEMORY UPDATES OFF', 18, memoryY + 3)
-  context.fillStyle = ink
-  context.fillText(arm.memoryLine.slice(0, 44), 214, memoryY + 3)
-
-  // Footer: the reason this bar went the way it did
-  context.fillStyle = '#0b121a'
-  context.fillRect(0, height - 30, width, 30)
-  context.fillStyle = dim
-  context.fillText((arm.reason || 'no order this bar').slice(0, 96), 14, height - 10)
-  if (Math.sin(time * 3) > 0) {
-    context.fillStyle = accent
-    context.fillRect(width - 16, height - 21, 7, 12)
-  }
-
-  // Trade reaction: a wash over the whole screen that decays, so a fill is unmissable even
-  // while the terminal keeps showing the live numbers underneath.
-  if (flash > 0) {
-    context.globalAlpha = Math.min(0.5, flash * 0.5)
-    context.fillStyle = bandColour
-    context.fillRect(0, 0, width, height)
-    context.globalAlpha = 1
-    context.strokeStyle = bandColour
-    context.lineWidth = 6 + flash * 10
-    context.strokeRect(3, 3, width - 6, height - 6)
-    if (trade && flash > 0.35) {
-      context.font = 'bold 34px ui-monospace, SFMono-Regular, Menlo, monospace'
-      const text = `${trade.side} ${trade.base}`
-      const metric = context.measureText(text)
-      context.fillStyle = 'rgba(5, 8, 12, 0.82)'
-      context.fillRect(width / 2 - metric.width / 2 - 18, height / 2 - 34, metric.width + 36, 52)
-      context.fillStyle = bandColour
-      context.fillText(text, width / 2 - metric.width / 2, height / 2 + 2)
-    }
-  }
-
-  terminal.texture.needsUpdate = true
-}
-
 /** Where the camera looks. The desk surface is world y = 0 and the fly sits on it. */
 const LOOK_AT_Y = 1.02
 /** Desk feet are at this local height, so this is where the room's floor belongs. */
@@ -337,17 +147,17 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   // the lower middle of the frame (|x| ~ 0.48), both screens above them (|x| ~ 0.65), the
   // desks bleed off the bottom and outer edges, and nothing important is cropped. The
   // harness page (`/floor-check.html`) prints these numbers for anyone changing them.
-  const spread = options.spread ?? 3.34
+  const spread = options.spread ?? 2.75
   const cameraDistance = options.distance ?? 8.6
   const cameraHeight = options.height ?? 3.4
   const fov = options.fov ?? 34
-  const flyScale = options.flyScale ?? 0.86
+  const flyScale = options.flyScale ?? 1.06
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.08
+  renderer.toneMappingExposure = 1.3
   renderer.outputColorSpace = THREE.SRGBColorSpace
   renderer.domElement.style.display = 'block'
   renderer.domElement.style.width = '100%'
@@ -357,11 +167,12 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   const scene = new THREE.Scene()
   scene.background = new THREE.Color(0x070b11)
   // Far enough that the wall board (which sits behind the desks) is not washed out.
-  scene.fog = new THREE.Fog(0x070b11, 17, 42)
+  scene.fog = new THREE.Fog(0x6d859a, 35, 95)
 
   const pmrem = new THREE.PMREMGenerator(renderer)
   const environment = pmrem.fromScene(new RoomEnvironment(), 0.05)
   scene.environment = environment.texture
+  scene.environmentIntensity = .38
   pmrem.dispose()
 
   const camera = new THREE.PerspectiveCamera(fov, 2, 0.1, 100)
@@ -387,17 +198,14 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   const fill = new THREE.DirectionalLight(0x6f8fd0, 0.7)
   fill.position.set(-6, 4, -4)
   scene.add(fill)
-
-  const backdrop = new THREE.Mesh(
-    new THREE.PlaneGeometry(60, 26),
-    new THREE.MeshStandardMaterial({ color: 0x0a0f16, roughness: 1, metalness: 0 }),
-  )
-  backdrop.position.set(0, 5, -9)
-  scene.add(backdrop)
+  const rim = new THREE.DirectionalLight(0x71e3cf, 2.3)
+  rim.position.set(0, 4, -3)
+  scene.add(rim)
+  scene.add(buildOffice())
 
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(60, 34),
-    new THREE.MeshStandardMaterial({ map: gridTexture(), roughness: 0.9, metalness: 0.1 }),
+    new THREE.MeshStandardMaterial({ color:0x263d3c, map: gridTexture(), roughness: 0.72, metalness: 0.3 }),
   )
   // The floor sits at the height of the desk feet. It used to sit at y = 0 while the
   // stations were pushed 1.02 below it, which buried both flies under an opaque plane.
@@ -415,6 +223,8 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   // Trade cam follows whichever fly just traded: the camera eases toward that desk for a
   // few seconds, then returns. Purely a framing move — it changes nothing about the run.
   const tradeCam = { enabled: false, focus: -1, until: -99, x: 0, zoom: 1 }
+  let view: 'floor' | 'gordon' | 'warren' = 'floor'
+  let brainMode = false
   let target: THREE.WebGLRenderTarget | null = null
   const quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
   const quadMaterial = new THREE.ShaderMaterial({
@@ -632,7 +442,6 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     // legible but not a wind machine.
     const speed = mood === 'halted' ? 0 : busy ? 19 : 8
     const amplitude = mood === 'halted' ? 0 : busy ? 0.5 : 0.22
-    clock += dt
     const t = clock * speed + station.flapPhase * 3.1
     const beat = Math.sin(t)
     const tuck = mood === 'veto' || mood === 'blocked' ? -0.22 : 0
@@ -644,15 +453,39 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     // as it lands. Always typing — they are supposed to be working.
     const tapRate = mood === 'halted' ? 0 : busy ? 13 : 6.5
     const tapPhase = clock * tapRate + station.flapPhase
+    for (const row of station.keyboard.caps) for (const cap of row) {
+      (cap.material as THREE.MeshStandardMaterial).emissiveIntensity = 0
+    }
+    station.fly.brain.update(station.arm?.brainActivity ?? [], reduced ? 0 : clock)
     station.fly.typingArms.forEach((arm, index) => {
-      const side = index === 0 ? -1 : 1
       const strike = Math.max(0, Math.sin(tapPhase + index * Math.PI))
-      // Negative X swings the forelegs forward onto the deck (positive swung them back).
-      arm.rotation.x = -0.68 + strike * 0.16
-      arm.rotation.z = side * (0.16 - strike * 0.06)
+      arm.rotation.set(0,0,0)
       const row = station.keyboard.caps[2]
       const cap = row?.[index === 0 ? 4 : 9 + ((Math.floor(clock * tapRate) % 3) - 1)]
       if (cap) {
+        // Solve each articulated foreleg to the actual key position, including desk,
+        // keyboard and fly transforms. The foot now physically reaches the lit key.
+        station.fly.root.updateWorldMatrix(true,true)
+        station.keyboard.group.updateWorldMatrix(true,true)
+        const keyPosition = cap.getWorldPosition(new THREE.Vector3())
+        keyPosition.y += .025 + (1-strike)*.10
+        const target = arm.worldToLocal(keyPosition)
+        const elbow = target.clone().multiplyScalar(.48)
+        elbow.x += index===0 ? -.15 : .15
+        elbow.y += .13
+        const wrist = target.clone().lerp(elbow,.12)
+        const points = [new THREE.Vector3(),elbow,wrist,target]
+        const lengths = [.26,.22,.1]
+        for(let segment=0;segment<3;segment++) {
+          const bone=arm.children[segment]
+          const delta=points[segment+1].clone().sub(points[segment])
+          bone.position.copy(points[segment]).add(points[segment+1]).multiplyScalar(.5)
+          bone.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),delta.clone().normalize())
+          bone.scale.y=delta.length()/lengths[segment]
+        }
+        station.fly.typingTips[index].position.copy(target)
+        arm.children[4].position.copy(elbow)
+        arm.children[5].position.copy(wrist)
         const material = cap.material as THREE.MeshStandardMaterial
         material.emissive = material.emissive ?? new THREE.Color()
         material.emissive.setHex(0xffb454)
@@ -698,19 +531,21 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   }
 
   const renderFrame = (dt: number) => {
-    for (const station of stations) animateWings(station, dt)
-    if (!reduced) {
-      const fit = Math.max(0.86, Math.min(1.34, 1400 / width))
+    clock += reduced ? 0 : dt
+    for (const station of stations) animateWings(station, reduced ? 0 : dt)
+    {
+      const fit = Math.max(0.86, Math.min(3.4, 1.65 / camera.aspect))
       const focused = tradeCam.enabled && tradeCam.focus >= 0 && tradeCam.until > clock
-      const wantX = focused ? stations[tradeCam.focus].side * spread * 0.42 : 0
-      const wantZoom = focused ? 0.9 : 1
-      tradeCam.x += (wantX - tradeCam.x) * 0.05
-      tradeCam.zoom += (wantZoom - tradeCam.zoom) * 0.05
+      const selected = view === 'gordon' ? -1 : view === 'warren' ? 1 : 0
+      const wantX = selected ? selected * spread : focused ? stations[tradeCam.focus].side * spread * .6 : 0
+      const wantZoom = selected ? .61 : focused ? .9 : 1
+      tradeCam.x += (wantX - tradeCam.x) * (reduced ? 1 : .065)
+      tradeCam.zoom += (wantZoom - tradeCam.zoom) * (reduced ? 1 : .065)
       const distance = cameraDistance * fit * tradeCam.zoom
       camera.position.x += (tradeCam.x + pointer.x * 0.55 - camera.position.x) * 0.045
       camera.position.y += (cameraHeight * fit * tradeCam.zoom + pointer.y * -0.28 - camera.position.y) * 0.045
       camera.position.z += (distance - camera.position.z) * 0.045
-      camera.lookAt(tradeCam.x * 0.6, LOOK_AT_Y, 0)
+      camera.lookAt(tradeCam.x * (selected ? 1 : .6), selected ? .7 : LOOK_AT_Y, 0)
     }
     if (pixel.enabled && target) {
       renderer.setRenderTarget(target)
@@ -747,7 +582,8 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   observer.observe(container)
 
   const onVisibility = () => {
-    paused = document.hidden || paused
+    const bounds = container.getBoundingClientRect()
+    paused = document.hidden || bounds.bottom <= 0 || bounds.top >= window.innerHeight
     lastTime = performance.now()
   }
   document.addEventListener('visibilitychange', onVisibility)
@@ -825,6 +661,8 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     })
     return {
       pixelArt: { ...pixel },
+      brainMode,
+      view,
       tradeCam: {
         enabled: tradeCam.enabled,
         focus: tradeCam.focus,
@@ -941,6 +779,13 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
       renderFrame(0)
       publishDiagnostics()
     },
+    setBrainMode(enabled: boolean) {
+      brainMode = enabled
+      for (const station of stations) station.fly.brain.root.visible = enabled
+      renderFrame(0)
+      publishDiagnostics()
+    },
+    setView(next) { view = next; renderFrame(0); publishDiagnostics() },
     setTradeCam(enabled: boolean) {
       tradeCam.enabled = enabled
       if (!enabled) {
@@ -966,7 +811,7 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
       window.removeEventListener('pointermove', onPointerMove)
       scene.traverse((object) => {
         const mesh = object as THREE.Mesh
-        if (!mesh.isMesh) return
+        if (!mesh.geometry) return
         mesh.geometry?.dispose()
         const material = mesh.material as THREE.Material | THREE.Material[]
         for (const entry of Array.isArray(material) ? material : [material]) {
@@ -976,6 +821,9 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
         }
       })
       environment.texture.dispose()
+      target?.dispose()
+      quadMaterial.dispose()
+      ;(quadScene.children[0] as THREE.Mesh).geometry.dispose()
       renderer.dispose()
       renderer.domElement.remove()
     },

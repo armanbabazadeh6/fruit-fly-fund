@@ -4,6 +4,18 @@
   flex-direction: column;
 }
 
+.lab-intro { display:flex; justify-content:space-between; align-items:center; padding:28px 10px 34px; gap:24px; }
+.eyebrow { font:11px var(--font-num); letter-spacing:.2em; color:var(--amber); margin:0 0 20px; }
+.lab-intro h1 { font-size:clamp(38px,4.8vw,72px); font-weight:550; line-height:1.02; letter-spacing:-.065em; margin:0 0 22px; }
+.lab-intro h1 em { font-family:Georgia,serif; font-weight:400; color:#c7e8ad; }
+.lab-intro p:not(.eyebrow) { color:var(--ink-3); max-width:450px; font-size:14px; }
+.lab-stamp { display:flex; flex-direction:column; align-items:center; gap:7px; min-width:230px; padding:20px 32px; border-left:1px solid var(--line); }
+.lab-stamp strong { font:38px var(--font-num); letter-spacing:-.06em; }
+.lab-stamp>span:not(.lab-orbit) { font:10px var(--font-num); letter-spacing:.18em; color:#c7e8ad; }
+.lab-stamp small { color:var(--ink-3); font-size:11px; }
+.lab-orbit { color:#c7e8ad; font-size:34px; }
+@media(max-width:700px) { .lab-stamp { display:none; } .lab-intro { padding:20px 2px; } }
+
 .app-main {
   flex: 1;
   display: flex;
