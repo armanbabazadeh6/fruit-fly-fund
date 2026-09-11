@@ -79,8 +79,10 @@ export function buildOffice() {
     const streak=box(.1,5,.01,x,2,-5.71,reflection)
     streak.rotation.z=-.27
   }
-  const daylight=new THREE.DirectionalLight(0xa8d9ff,1.5)
-  daylight.position.set(-5,5,-8)
+  // Centred on the room: a light hung off to one side lit the left desk ~5x brighter
+  // than the right, which the two-flies-identical framing cannot afford.
+  const daylight = new THREE.DirectionalLight(0xa8d9ff,1)
+  daylight.position.set(0,5,-8)
   office.add(daylight)
   return office
 }
