@@ -3,6 +3,71 @@
 Running log so the desktop session can pick up exactly where the laptop stopped.
 Newest entries at the top.
 
+## RESUME TOMORROW (handoff)
+
+**Clean tree at `13b38f6`.** 124 tests pass.
+
+**One job may still be running when you read this:** `trio` — the corrected exam trio
+(`exam-fixed`, `exam-reset`, `exam-readout`), 48 bars each against the training season's brains
+on a disjoint window. It was ~15 min from finishing. If it completed, `runs/` has the three
+recordings and `results/report.md` was regenerated (so that file will be dirty in git). If you
+would rather it stop: `hub stop name=trio`.
+
+**First thing to do tomorrow**
+
+```sh
+.venv/bin/python -m flyvsly report --runs runs --table
+.venv/bin/python - <<'EOF'
+import glob, json
+for p in sorted(glob.glob('runs/*/recording.json')):
+    r = json.load(open(p))
+    if not r['run'].get('label','').startswith('exam'): continue
+    a = r['summary']['arms']; run = r['run']
+    print(run['label'], run['kind'], '| exam_window', run.get('exam_window'))
+    for arm in r['arms']:
+        s = a[arm['id']]
+        changes = sorted({o['arms'][arm['id']]['signal']['memory']['changed_edges'] for o in r['observations']})
+        print('   ', arm['id'], (arm.get('starting_weights') or {}).get('kind'), f"{s['return_pct']:+.3f}%",
+              'changed_edges', changes)
+EOF
+```
+
+Check three things in that output before trusting anything:
+
+1. **The trained arm's `changed_edges` must be a single value** (its weights never move) and the
+   control's must be `0`. If the trained arm's changes vary, the frozen-flag fix is not in the
+   run and the numbers are void again.
+2. **The reset arm's `changed_edges` must be `0`** for every bar. If it is 3386, the wipe was
+   undone.
+3. **`exam_window.shared_bars` must be 0** — the guard would have refused the run otherwise, so
+   its presence is the proof the window was disjoint.
+
+**Then**
+
+1. Replace the README's "held-out exam" table with the corrected numbers, and drop the
+   "these windows overlap" caveat only for the new runs (the older campaigns still overlap).
+2. Re-run the activity A/B into `runs/` so `docs/activity.md`'s preset table has an artifact
+   behind it: `--preset upstream` and `--preset active`, 8 bars, same seed, both arms measured
+   from the recordings rather than from a scratch directory.
+3. `flyvsly publish --runs runs --web web/public/recordings --limit 8 --neural-only`, then
+   `npm run build` in `web/`, then commit the regenerated `results/report.md` and the published
+   set.
+4. Still open from the audit, lower priority: `docs/telemetry.md`'s SSE table has not been
+   re-checked against `server.py` since the replay work.
+
+**What is done and verified**
+
+- Exam, reset and readout run end to end, with the failure modes this project shipped now
+  covered by tests: an exam that learns is refused, an exam differing in anything but the
+  starting weights is refused, a restored brain is re-frozen against the checkpoint's own flag,
+  a reset brain stays reset because the deviations are zeroed with the weights, and a season
+  sharing a bar with the run it is graded against is refused.
+- `--window-offset` counts rows; the market cache is versioned so a semantics change cannot be
+  served from files an older build wrote; offsets 0/48/96/144 share zero bars pairwise.
+- The activity controls (`--preset upstream|active|scalper`, `--reinforcement
+  pnl|decoy|shuffled|none`) and the season library, trade cam, 8-bit mode, live progress/ETA and
+  fill markers on the equity chart.
+
 ## RESUME HERE
 
 Paused with a clean tree at `9ffce9c`. The two remaining exam runs (`exam-reset`,
