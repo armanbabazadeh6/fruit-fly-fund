@@ -251,6 +251,7 @@ class RunHub:
                 spec,
                 warmup_bars=warmup,
                 poll_seconds=float(options.get("poll_seconds", 15)),
+                venue=str(options.get("source", "kraken")),
             )
             arena = Arena(config, on_event=self._event, data_root=self.data)
             run_id = time.strftime("%Y%m%d-%H%M%S") + "-live"

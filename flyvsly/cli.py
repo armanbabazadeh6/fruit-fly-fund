@@ -362,6 +362,7 @@ def cmd_live(args):
         "bars": args.bars,
         "warmup": args.warmup,
         "poll_seconds": args.poll,
+        "source": args.source,
         "capital": args.capital,
         "order_limit": args.order_limit,
         "daily_orders": args.daily_orders,
@@ -778,6 +779,15 @@ def main(argv=None):
     )
     live.add_argument("--engine", choices=["neural", "procedural"], default="neural")
     live.add_argument("--product", default="BTC-USDC")
+    live.add_argument(
+        "--source",
+        choices=["kraken", "coinbase"],
+        default="kraken",
+        help=(
+            "where the bars come from; Coinbase Exchange has delisted every pair upstream"
+            " allows, so Kraken is the default that can actually close a bar"
+        ),
+    )
     live.add_argument("--bar-seconds", type=int, default=60, help="bar length, and the cadence")
     live.add_argument(
         "--bars",

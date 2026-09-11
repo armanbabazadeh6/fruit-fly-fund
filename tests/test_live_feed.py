@@ -5,6 +5,8 @@ injected, because the failure this module exists to prevent (a fly reading a buc
 exchange is still filling) is exactly the case a live test would be least likely to catch.
 """
 
+import json
+
 import pytest
 
 from flyvsly.config import MarketSpec
@@ -146,3 +148,68 @@ def test_feed_refuses_to_start_without_enough_history():
     feed = CandleFeed(SPEC, warmup_bars=3, poll_seconds=0, fetch=source, clock=Clock(EPOCH + 600))
     with pytest.raises(RuntimeError, match="completed BTC-USDC bars"):
         feed.prime()
+
+
+# -- the venue ---------------------------------------------------------------------------
+#
+# Coinbase Exchange delisted every pair upstream allows (BTC-USDC, ETH-USDC, SOL-USDC all stop
+# at 2022-07-13 and answer "Not allowed for delisted products"), so the live feed reads Kraken,
+# which still trades them. Same rule applies there: no forming bar is ever traded.
+
+
+class _Response:
+    def __init__(self, payload):
+        self.body = json.dumps(payload).encode()
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_kraken_rows_are_normalised_to_the_shared_shape(monkeypatch):
+    from flyvsly import market
+
+    payload = {
+        "error": [],
+        # Kraken: [time, open, high, low, close, vwap, volume, count]
+        "result": {"XXBTUSDC": [[EPOCH, "77000.0", "77200.0", "76900.0", "77173.79", "77050.0", "1.5", 42]]},
+    }
+    monkeypatch.setattr(market.urllib.request, "urlopen", lambda *a, **k: _Response(payload))
+    # …and out in the order the rest of the project reads: [t, low, high, open, close, volume]
+    assert market.kraken_candles("BTC-USDC", 60) == [
+        [EPOCH, 76900.0, 77200.0, 77000.0, 77173.79, 1.5]
+    ]
+
+
+def test_kraken_refuses_a_pair_or_interval_it_cannot_serve():
+    from flyvsly import market
+
+    with pytest.raises(ValueError, match="does not list"):
+        market.kraken_candles("DOGE-USDC", 60)
+    with pytest.raises(ValueError, match="interval"):
+        market.kraken_candles("BTC-USDC", 90)
+
+
+def test_kraken_surfaces_a_venue_error_rather_than_trading_blind(monkeypatch):
+    from flyvsly import market
+
+    monkeypatch.setattr(
+        market.urllib.request, "urlopen", lambda *a, **k: _Response({"error": ["EQuery:Unknown asset pair"]})
+    )
+    with pytest.raises(RuntimeError, match="Unknown asset pair"):
+        market.kraken_candles("BTC-USDC", 60)
+
+
+def test_feed_records_which_venue_the_bars_came_from():
+    source = Source(page(4, EPOCH - 180))
+    clock = Clock(EPOCH + 15)
+    feed = CandleFeed(SPEC, warmup_bars=3, poll_seconds=0, fetch=source, clock=clock, venue="kraken")
+    season = feed.prime()
+    assert season.provenance["source"] == "kraken-public-candles"
+    assert season.provenance["venue"] == "kraken"
+    assert season.provenance["mode"] == "live"

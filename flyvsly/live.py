@@ -18,7 +18,7 @@ Paper only, and no credentials of any kind: this reads the same public endpoint
 import dataclasses
 import time
 
-from .market import Season, _candles
+from .market import Season, _candles, kraken_candles
 
 # A bucket is only trusted once the clock is past its end plus this much slack.
 COMPLETION_GRACE_SECONDS = 10
@@ -165,11 +165,20 @@ class CandleFeed:
         poll_seconds: float = 15.0,
         fetch=None,
         clock=time.time,
+        venue: str = "kraken",
     ):
         self.spec = spec
         self.warmup_bars = int(warmup_bars)
         self.poll_seconds = float(poll_seconds)
-        self.fetch = fetch or (lambda: _candles(spec.product, spec.bar_seconds))
+        # Kraken by default: every pair upstream allows is delisted on Coinbase Exchange, where
+        # a live session would wait forever for a bar that never closes.
+        self.venue = venue
+        if fetch is not None:
+            self.fetch = fetch
+        elif venue == "kraken":
+            self.fetch = lambda: kraken_candles(spec.product, spec.bar_seconds)
+        else:
+            self.fetch = lambda: _candles(spec.product, spec.bar_seconds)
         self.clock = clock
         self.season: LiveSeason | None = None
         self.last_poll = 0.0
@@ -189,7 +198,8 @@ class CandleFeed:
             [close for _, close in window],
             [opened for opened, _ in window],
             {
-                "source": "coinbase-public-candles",
+                "source": f"{self.venue}-public-candles",
+                "venue": self.venue,
                 "mode": "live",
                 "product": self.spec.product,
                 "bar_seconds": self.spec.bar_seconds,

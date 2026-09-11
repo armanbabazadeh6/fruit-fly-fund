@@ -39,6 +39,16 @@ INCREMENTS = {
 
 COINBASE_CANDLES = "https://api.exchange.coinbase.com/products/{product}/candles"
 
+# Kraken, for the pairs Coinbase Exchange no longer lists. Every product upstream allows —
+# BTC-USDC, ETH-USDC, SOL-USDC — is delisted there: `/ticker` answers "Not allowed for
+# delisted products" and the candles stop at 2022-07-13, so a live session on Coinbase can
+# never see a bar close. Kraken still quotes them.
+KRAKEN_OHLC = "https://api.kraken.com/0/public/OHLC"
+
+# Kraken's own pair names, and the bar length it expects in *minutes*.
+KRAKEN_PAIRS = {"BTC-USDC": "XBTUSDC", "ETH-USDC": "ETHUSDC", "SOL-USDC": "SOLUSDC"}
+KRAKEN_MINUTES = {60: 1, 300: 5, 900: 15, 1800: 30, 3600: 60, 14400: 240, 86400: 1440}
+
 # Bump when the *fetch semantics* change, not just the parameters. The cache is keyed by
 # product/offset/bars, so a change in what an offset means would otherwise be served from
 # files an older build wrote — which is exactly how a fixed window offset kept producing
@@ -89,6 +99,51 @@ def synthetic_closes(spec) -> list[float]:
         price = max(price * (1.0 + step), 0.01)
         closes.append(round(price, 2))
     return closes
+
+
+def kraken_candles(product: str, bar_seconds: int) -> list[list]:
+    """The newest page of Kraken's public OHLC, in the shape :func:`_candles` returns.
+
+    Kraken reports ``[time, open, high, low, close, vwap, volume, count]``, oldest first, with
+    the minute still forming as the last row — the same trap the Coinbase endpoint sets, and
+    the reason the live feed only ever trades a row whose period has ended.
+
+    Public, keyless, and read once per poll: this is the same class of request as the
+    Coinbase one, just at a venue that still trades these pairs.
+    """
+    pair = KRAKEN_PAIRS.get(product)
+    if pair is None:
+        raise ValueError(
+            f"Kraken does not list {product!r} under a name this project knows; "
+            f"known pairs: {', '.join(sorted(KRAKEN_PAIRS))}"
+        )
+    minutes = KRAKEN_MINUTES.get(int(bar_seconds))
+    if minutes is None:
+        raise ValueError(
+            f"Kraken intervals are fixed ({', '.join(str(m * 60) for m in sorted(KRAKEN_MINUTES))} "
+            f"seconds); {bar_seconds} is not one of them"
+        )
+    url = KRAKEN_OHLC + "?" + urllib.parse.urlencode({"pair": pair, "interval": minutes})
+    request = urllib.request.Request(url, headers={"User-Agent": "flyvsly/0.1"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(
+            f"Kraken OHLC request failed ({error.code}) for {url}. "
+            "Use a synthetic season if the venue is unreachable."
+        ) from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(
+            f"Cannot reach the Kraken public OHLC endpoint ({error.reason}). "
+            "Synthetic seasons work offline."
+        ) from error
+    if payload.get("error"):
+        raise RuntimeError(f"Kraken OHLC error for {pair}: {payload['error']}")
+    result = payload.get("result") or {}
+    rows = next((value for key, value in result.items() if key != "last" and isinstance(value, list)), [])
+    # Normalise to the Coinbase column order so one parser reads both venues.
+    return [[int(row[0]), float(row[3]), float(row[2]), float(row[1]), float(row[4]), float(row[6])] for row in rows]
 
 
 def _candles(product: str, bar_seconds: int, start=None, end=None) -> list[list]:
