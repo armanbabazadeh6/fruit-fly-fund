@@ -13,35 +13,11 @@ from pathlib import Path
 MODES = ("pnl", "decoy", "shuffled", "none")
 
 
-def _recording_path(runs_dir, run_id: str) -> Path:
-    """Locate a recording by run id, or by label if no id matches.
-
-    A campaign cannot name its own run ids in advance (they are timestamps), so a reference
-    may also be a label: the newest recording carrying that label is used.
-    """
-    root = Path(runs_dir)
-    for candidate in (root / run_id / "recording.json", root / f"{run_id}.json"):
-        if candidate.exists():
-            return candidate
-    matches: list[tuple[float, Path]] = []
-    for candidate in root.glob("*/recording.json"):
-        try:
-            recording = json.loads(candidate.read_text())
-        except (OSError, ValueError):
-            continue
-        if recording.get("run", {}).get("label") == run_id:
-            matches.append((recording["run"].get("created", 0), candidate))
-    if matches:
-        return max(matches)[1]
-    raise FileNotFoundError(
-        f"No recording for reference {run_id!r} under {runs_dir} "
-        "(tried <id>/recording.json, <id>.json, and a matching run label)"
-    )
-
-
 def load_schedule(runs_dir, run_id: str) -> list[str]:
     """The per-bar stimulus kinds a previous run delivered to its experimental arm."""
-    path = _recording_path(runs_dir, run_id)
+    from .report import recording_path
+
+    path = recording_path(runs_dir, run_id)
     recording = json.loads(path.read_text())
     schedule = [
         observation["arms"]["gordon"]["stimulus"]["kind"]

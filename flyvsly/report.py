@@ -27,6 +27,32 @@ def load_manifests(runs_dir="runs"):
     return manifests
 
 
+def recording_path(runs_dir, ref: str):
+    """Resolve a run id, or the newest recording carrying that label.
+
+    A campaign cannot name its own run ids in advance (they are timestamps), so both forms are
+    accepted wherever a recording is named as a reference.
+    """
+    root = Path(runs_dir)
+    for candidate in (root / ref / "recording.json", root / f"{ref}.json"):
+        if candidate.exists():
+            return candidate
+    matches = []
+    for candidate in root.glob("*/recording.json"):
+        try:
+            recording = json.loads(candidate.read_text())
+        except (OSError, ValueError):
+            continue
+        if recording.get("run", {}).get("label") == ref:
+            matches.append((recording["run"].get("created", 0), candidate))
+    if matches:
+        return max(matches)[1]
+    raise FileNotFoundError(
+        f"No recording for reference {ref!r} under {runs_dir} "
+        "(tried <id>/recording.json, <id>.json, and a matching run label)"
+    )
+
+
 def summarise(manifests) -> dict:
     groups = {}
     for manifest in manifests:

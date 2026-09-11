@@ -8,13 +8,17 @@ per-bar trail alone, one JSON object per line, for `grep` and spreadsheets.
 Schema string: `flyvsly.recording/v1`. The front-end types are in `web/src/lib/types.ts`
 and mirror this page.
 
+The example below is illustrative: the run id is a placeholder and the numbers are shaped like a
+real season's, not copied from one. Read a recording for the actual values — `runs/<id>/recording.json`
+locally, or a published one under `web/public/recordings/`.
+
 ```jsonc
 {
   "schema": "flyvsly.recording/v1",
   "run": {
-    "id": "20260910-143345-r0",
+    "id": "20260101-000000-r0",   // placeholder, not a real run
     "engine": "neural",              // "neural" | "procedural"
-    "season": "coinbase:BTC-USDC:newest-0bars:bars=48",
+    "season": "coinbase:BTC-USDC:newest-0bars:bars=48",  // a real descriptor form
     "bars": 48, "bar_seconds": 60,
     "rules": { /* the frozen rule set, identical for both arms */ },
     "starting_conditions": {

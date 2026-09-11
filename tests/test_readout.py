@@ -172,3 +172,35 @@ def test_score_rejects_a_vector_of_the_wrong_width():
     readout = Readout(weights=[1.0, 2.0], bias=0.0, mean=[0.0, 0.0], scale=[1.0, 1.0], metrics={})
     with pytest.raises(ValueError):
         readout.score([1.0])
+
+
+def test_pooled_seasons_do_not_label_across_their_boundary():
+    """Concatenating seasons must not invent a return from one market into the next.
+
+    Two flat seasons at very different levels: without boundary handling the last bar of the
+    first is labelled from the second's first close, a move that never happened, and it sits
+    exactly where a temporal split is most likely to trust it.
+    """
+    vectors = [[float(i % 3)] * 4 for i in range(40)]
+    closes = [100.0] * 20 + [200.0] * 20
+    naive = fit(vectors, closes, horizon=1)
+    aware = fit(vectors, closes, horizon=1, boundaries=[0, 20])
+    naive_bars = naive.metrics["train"]["bars"] + naive.metrics["holdout"]["bars"]
+    aware_bars = aware.metrics["train"]["bars"] + aware.metrics["holdout"]["bars"]
+    # One fabricated sample at the seam, and only one.
+    assert naive_bars - aware_bars == 1
+
+
+def test_boundaries_can_exhaust_the_data():
+    """When every label would cross a seam, say so rather than fit on nothing."""
+    with pytest.raises(ValueError, match="cross a season boundary"):
+        fit([[1.0, 0.0]] * 6, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], horizon=3, boundaries=[0, 3])
+
+
+def test_dropped_crossings_are_reported():
+    vectors = [[float(i % 3)] * 4 for i in range(40)]
+    closes = [100.0] * 20 + [200.0] * 20
+    assert fit(vectors, closes, horizon=1).metrics["dropped_cross_boundary_samples"] == 0
+    aware = fit(vectors, closes, horizon=1, boundaries=[0, 20])
+    assert aware.metrics["dropped_cross_boundary_samples"] == 1
+    assert aware.metrics["season_boundaries"] == 2

@@ -172,6 +172,7 @@ def fit(
     learning_rate: float = 0.5,
     l2: float = 1e-3,
     trained_on: str = "",
+    boundaries=None,
 ) -> Readout:
     """Fit a readout to predict the sign of `closes[i + horizon] - closes[i]`.
 
@@ -179,6 +180,12 @@ def fit(
     `closes` that arm's bar closes. Bounded batches of batch gradient descent keep this
     fast enough to run inside a trading loop; the objective is the usual logistic
     log-loss, so the score is calibrated-ish log-odds rather than an arbitrary sum.
+
+    `boundaries` names the index where each pooled segment starts, when several seasons have
+    been concatenated. A sample whose forward return lands in the next segment is dropped
+    rather than labelled: pairing the last bar of one season with the first close of another
+    fabricates a return that never happened, and it does so right at the boundary a temporal
+    split is most likely to trust.
     """
     if horizon < 1:
         raise ValueError("horizon must be at least one bar")
@@ -199,10 +206,27 @@ def fit(
     if usable < 2:
         raise ValueError("not enough bars to fit a readout for this horizon")
 
-    inputs = features[:usable]
+    index = np.arange(usable)
+    dropped_crossings = 0
+    if boundaries:
+        starts = sorted(int(value) for value in boundaries if 0 < int(value) < features.shape[0])
+        keep = np.ones(usable, dtype=bool)
+        for start in starts:
+            # A label at i reaches i + horizon; if a segment begins in between, the return
+            # crosses a season boundary and is not a return of this market at all.
+            keep[max(0, start - horizon) : start] = False
+        dropped_crossings = int(np.count_nonzero(~keep))
+        index = index[keep]
+        usable = index.size
+        if usable < 2:
+            raise ValueError(
+                "not enough bars left after dropping labels that cross a season boundary"
+            )
+
+    inputs = features[index]
     # A flat forward move has no direction to learn; treat it as an up bar so the label
     # is always ±1 rather than an ambiguous zero.
-    deltas = prices[horizon:] - prices[:usable]
+    deltas = prices[index + horizon] - prices[index]
     targets = np.where(deltas >= 0.0, 1.0, -1.0)
 
     split = int(usable * train_fraction)
@@ -232,6 +256,8 @@ def fit(
     holdout_scores = holdout_std @ weights + bias
 
     metrics = {
+        "dropped_cross_boundary_samples": dropped_crossings,
+        "season_boundaries": len(boundaries) if boundaries else 1,
         "horizon": int(horizon),
         "features": int(features.shape[1]),
         "epochs": int(epochs),

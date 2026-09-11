@@ -263,6 +263,7 @@ def cmd_run(args):
         kind=args.kind,
         starting=starting,
         save_brains=Path(args.save_brains) if args.save_brains else None,
+        must_not_overlap=args.must_not_overlap,
         rules=_rules(args),
         market=_market(args, 0),
         engine=args.engine,
@@ -429,12 +430,16 @@ def cmd_fitreadout(args):
             continue
         starting = (arm_meta.get("starting_weights") or {}).get("label") or "baseline"
         key = (recording["run"]["season"], args.arm, starting)
+        # `load_manifests` returns newest first, so the first one seen for a key is the newest
+        # and the later ones are the repeats that must be dropped — not the other way round.
         if key in groups:
             duplicates.append(recording["run"]["id"])
+            continue
         groups[key] = recording
 
     vectors: list[list[int]] = []
     closes: list[float] = []
+    boundaries: list[int] = []
     used = []
     # Chronological by the season's own first bar, so the temporal split inside the fit is a
     # split in market time rather than in file order.
@@ -451,11 +456,12 @@ def cmd_fitreadout(args):
             season_closes.append(bars[observation["i"]]["mid"])
         if len(season_vectors) <= args.horizon:
             continue
-        # Drop each season's tail so no target reaches across into the next season: pairing
-        # the last bar of one season with the first close of another would be a fabricated
-        # sample, and exactly the kind of leak this experiment exists to avoid.
-        vectors.extend(season_vectors[: -args.horizon])
-        closes.extend(season_closes[: -args.horizon])
+        # No trimming here: `fit` is told where the seasons begin and drops the samples whose
+        # forward return would cross into the next one. Trimming the tails was not enough —
+        # the seasons stay adjacent in the pool, so the boundary label still crossed.
+        boundaries.append(len(vectors))
+        vectors.extend(season_vectors)
+        closes.extend(season_closes)
         used.append(
             {
                 "run": recording["run"]["id"],
@@ -473,21 +479,37 @@ def cmd_fitreadout(args):
         )
         return 2
 
-    model = fit(vectors, closes, horizon=args.horizon, trained_on=f"{'+'.join(sorted(wanted))}:{args.arm}")
+    model = fit(
+        vectors,
+        closes,
+        horizon=args.horizon,
+        trained_on=f"{'+'.join(sorted(wanted))}:{args.arm}",
+        boundaries=boundaries,
+    )
+
+    # The margin decides how often the readout acts. It belongs to the model's own score scale
+    # (log-odds, so values well above 1 are normal), and it is stored with the model so a run
+    # that does not pass --readout-margin inherits a sensible band instead of a stale 0.15.
+    import numpy as np
+
+    scores = np.abs(np.asarray([model.score(vector) for vector in vectors], dtype=np.float64))
+    percentiles = {
+        f"p{value}": round(float(np.percentile(scores, value)), 4) for value in (50, 60, 75, 90)
+    }
+    model.metrics["absolute_score_percentiles"] = percentiles
     model.save(Path(args.out))
+
     description = model.describe()
     description["fitted_on"] = used
     description["usable_bars"] = len(vectors)
     description["distinct_seasons"] = len(used)
+    description["dropped_cross_boundary_samples"] = model.metrics.get(
+        "dropped_cross_boundary_samples", 0
+    )
+    description["season_boundaries"] = model.metrics.get("season_boundaries", 1)
     if duplicates:
         description["skipped_as_repeated_experiments"] = duplicates
 
-    # The margin decides how often the readout acts, so it should come from the score
-    # distribution rather than from a guess. Reported here; chosen when the run is launched.
-    import numpy as np
-
-    scores = np.abs(np.asarray([model.score(vector) for vector in vectors], dtype=np.float64))
-    percentiles = {f"p{value}": round(float(np.percentile(scores, value)), 4) for value in (50, 60, 75, 90)}
     description["absolute_score_percentiles"] = percentiles
     description["suggested_margin"] = percentiles["p60"]
 
@@ -623,13 +645,23 @@ def main(argv=None):
     )
     run.add_argument("--save-brains", default=None, help="directory to checkpoint both brains into")
     run.add_argument(
+        "--must-not-overlap",
+        default=None,
+        help="run id or label this season must not share bars with (an exam must be unseen)",
+    )
+    run.add_argument(
         "--window-offset",
         type=int,
         default=0,
-        help="coinbase: how many bars further back the season starts (keeps an exam unseen)",
+        help="coinbase: how many completed bars further back the season ends",
     )
     run.add_argument("--readout", default=None, help="fitted readout JSON to decide from")
-    run.add_argument("--readout-margin", type=float, default=0.15)
+    run.add_argument(
+        "--readout-margin",
+        type=float,
+        default=None,
+        help="HOLD band on the model's own score scale; defaults to the value stored with the model",
+    )
     run.add_argument("--population-sample", type=int, default=256)
     run.add_argument(
         "--reinforcement",

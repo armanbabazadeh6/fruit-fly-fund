@@ -78,12 +78,24 @@ class NeuralBackend:
         # A fitted readout replaces the fixed DNp20 rule. Both flies load the same model file:
         # the model is shared, the brain it reads is not.
         self.readout = None
+        self.readout_margin_source = "not set"
         if readout:
             from ..readout import Readout
 
             self.readout = Readout.load(readout)
             self.readout_source = str(readout)
-        self.readout_margin = float(readout_margin)
+        if readout_margin is not None:
+            self.readout_margin = float(readout_margin)
+            self.readout_margin_source = "given on the command line"
+        elif self.readout is not None:
+            stored = (self.readout.metrics.get("absolute_score_percentiles") or {}).get("p60")
+            self.readout_margin = float(stored) if stored else 0.15
+            self.readout_margin_source = (
+                "the model's own p60 absolute score" if stored else "fallback 0.15 (model stores no percentiles)"
+            )
+        else:
+            self.readout_margin = 0.15
+            self.readout_margin_source = "unused: no readout"
         self.memory_rule = brain.rule_parameters
         self.plastic_edges = int(len(brain.circuit["edges"]))
 
@@ -102,16 +114,26 @@ class NeuralBackend:
             "memory_rule": self.memory_rule,
             "population": self.population_description,
             "readout": self.readout.describe() if self.readout else None,
+            "readout_margin": self.readout_margin if self.readout else None,
+            "readout_margin_source": self.readout_margin_source,
             "decoder_cells": self.controller.decoder.identities,
             "decoder": (
-                "DNp20 mean right-minus-left firing, engineered interface rather than a "
-                "discovered buy/sell neuron. "
-                + (
-                    "Upstream's DNpe017 spike gate is required."
-                    if self.require_gate
-                    else "The DNpe017 gate is disabled (our change): the difference alone "
-                    "decides, which is why this run trades far more often."
+                (
+                    "A fitted readout decides this run, not the DNp20 rule. "
+                    "The DNp20 rule below is still evaluated on every bar and kept in each "
+                    "decision as `decoder_side`, as the audit trail of what the fixed "
+                    "interface would have said. "
                 )
+                if self.readout is not None
+                else ""
+            )
+            + "DNp20 mean right-minus-left firing, engineered interface rather than a "
+            "discovered buy/sell neuron. "
+            + (
+                "Upstream's DNpe017 spike gate is required."
+                if self.require_gate
+                else "The DNpe017 gate is disabled (our change): the difference alone decides, "
+                "which is why this run trades far more often."
             ),
             "decoder_gate_required": self.require_gate,
             "claims": (
@@ -169,6 +191,7 @@ class NeuralBackend:
             signal["decoder_side"] = out["side"]
             signal["readout_score"] = self.readout.score(vector)
             signal["readout_margin"] = self.readout_margin
+            signal["readout_horizon"] = int(self.readout.metrics.get("horizon", 1))
             signal["side"] = self.readout.decide(vector, self.readout_margin)
         return signal
 

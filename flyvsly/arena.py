@@ -96,44 +96,50 @@ DISCLAIMERS = [
 ]
 
 
-def personas_for(kind: str) -> tuple:
-    """Who the two flies are in this kind of run.
+def personas_for(kind: str, starting=None) -> tuple:
+    """Who the two flies are in this kind of run, derived from the starting specs.
 
-    A competition differs in `learning`; an exam or a reset freezes both and differs in the
-    brain each one carried in, so the role labels have to say that rather than claim one fly
-    is learning when it is not.
+    A competition differs in `learning`. An exam or a reset freezes both and differs in the
+    brain each one carried in, so the labels follow the specs rather than assuming that the
+    experimental fly is always the one holding the weights: a run whose weights sit on the
+    other arm would otherwise describe itself backwards in prose while its machine-checkable
+    block was right.
     """
     if kind == "competition":
         return PERSONAS
-    trained = "trained brain, frozen" if kind == "exam" else "trained, then reset, frozen"
-    return (
-        {
-            **PERSONAS[0],
-            # Frozen, both of them. The persona labels said "frozen" while `learning` stayed
-            # True on the experimental arm, so the exam was still learning during the exam and
-            # the fairness block claimed otherwise. The flag is what matters, not the label.
-            "learning": False,
-            "role": "experimental",
-            "role_label": trained.capitalize(),
-            "tagline": "Brought weights from an earlier season.",
-            "detail": (
-                "Both flies run with their weight updates frozen: nothing is learned during "
-                "this run, so the only difference between the two is the brain each one "
-                "carried in."
-            ),
-        },
-        {
-            **PERSONAS[1],
-            "learning": False,
-            "role": "control",
-            "role_label": "Fresh brain, frozen",
-            "tagline": "Never trained on anything.",
-            "detail": (
-                "Identical rules and identical frozen updates; its 7,835 eligible efficacies "
-                "are the reconstructed baseline."
-            ),
-        },
+    specs = starting or {}
+    carrying_label = (
+        "Trained brain, frozen" if kind == "exam" else "Trained, then reset, frozen"
     )
+    personas = []
+    for persona in PERSONAS:
+        kind_of = str(specs.get(persona["id"], "baseline")).split(":")[0]
+        carries = kind_of in ("trained", "reset")
+        personas.append(
+            {
+                **persona,
+                # Frozen, both of them: the flag is what matters, not the label.
+                "learning": False,
+                "role": "experimental" if carries else "control",
+                "role_label": carrying_label if carries else "Fresh brain, frozen",
+                "tagline": (
+                    "Brought weights from an earlier season."
+                    if carries
+                    else "Never trained on anything."
+                ),
+                "detail": (
+                    f"Restored from a checkpoint and frozen ({kind_of}): nothing is learned "
+                    "during this run, so the only difference between the two is the brain "
+                    "each one carried in."
+                    if carries
+                    else (
+                        "Identical rules and identical frozen updates; its 7,835 eligible "
+                        "efficacies are the reconstructed baseline."
+                    )
+                ),
+            }
+        )
+    return tuple(personas)
 
 
 class Arm:
@@ -326,7 +332,35 @@ class Arena:
         self.rules = config.rules
         self.season = None
         self.out_dir = None
-        self.personas = personas_for(config.kind)
+        self.personas = personas_for(config.kind, config.starting)
+
+    def _check_disjoint(self, season):
+        """Refuse a season that shares bars with the run it is supposed to be independent of."""
+        reference = self.config.must_not_overlap
+        if not reference:
+            return None
+        import json as _json
+
+        from .report import recording_path
+
+        # References normally live in the same directory this run writes to, but a run with a
+        # one-off --out should still be able to point at the campaign it is being graded against.
+        try:
+            path = recording_path(self.config.out, reference)
+        except FileNotFoundError:
+            path = recording_path("runs", reference)
+        other = _json.loads(path.read_text())
+        mine = {season.timestamp(i) for i in range(season.bars)}
+        theirs = {bar["t"] for bar in other["season"]["bars"]}
+        shared = mine & theirs
+        if shared:
+            raise RuntimeError(
+                f"This season shares {len(shared)} bars with {reference!r} "
+                f"({path.parent.name}). An exam must be graded on a market it has not seen: "
+                "raise --window-offset (the offset counts bars, so it must be at least the "
+                "season length) or point --must-not-overlap at the right run."
+            )
+        return {"must_not_overlap": reference, "reference_run": path.parent.name, "shared_bars": 0}
 
     def starting_for(self, arm_id: str):
         """Parse this arm's starting weights once, so every path uses the same object."""
@@ -362,6 +396,12 @@ class Arena:
         )
         if config.kind == "competition":
             assert_only_learning_differs(arm_settings(rules, True), arm_settings(rules, False))
+
+        # An exam is only an exam if the market was genuinely unseen. The offset is easy to get
+        # wrong — a 48-bar season spans about 64 minutes of market time, so stepping back 48
+        # minutes leaves a quarter of the "new" season inside the previous one — so this is
+        # checked against the recording it claims to be independent of, not assumed.
+        overlap = self._check_disjoint(season)
 
         self.emit(
             "season_ready",
@@ -441,6 +481,7 @@ class Arena:
                 "season": season.describe(),
                 "rules": json.loads(json.dumps(dataclasses.asdict(rules), default=str)),
                 "kind": config.kind,
+                "exam_window": overlap,
                 "reinforcement_mode": rules.reinforcement,
                 "rule_preset": config.preset,
                 "population": (
@@ -528,15 +569,19 @@ class Arena:
                 self.config.market.seed + index,
                 self.rules,
             )
-            arms.append(
-                Arm(
-                    persona,
-                    self.rules,
-                    backend,
-                    out,
-                    VirtualClock(self.season.timestamp(0)),
-                ).open_account()
-            )
+            arm = Arm(
+                persona,
+                self.rules,
+                backend,
+                out,
+                VirtualClock(self.season.timestamp(0)),
+                starting=self.starting_for(persona["id"]),
+            ).open_account()
+            # Same as the threaded path: without this a sequential run silently ignored
+            # `--starting` and ran both flies from the baseline. The CLI refuses exam and reset
+            # on the procedural engine, so it was reachable only through the library.
+            arm.apply_starting()
+            arms.append(arm)
         self.emit("arms_ready", arms=[arm.describe() for arm in arms])
         self.observations = []
         self.seconds_per_bar_mean = 0.0

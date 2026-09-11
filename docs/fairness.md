@@ -46,7 +46,7 @@ Documented rather than hidden, and identical for both arms:
 | `Guard` reads `time.time()` | `ReplayGuard` injects a virtual clock; sizing still calls upstream's `Guard.plan` | Cooldown, daily-order and quote-age rules must be measured in market time. `tests/test_execution_parity.py` pins the planned order to upstream's for the same inputs |
 | Re-fetches the book after neural integration and vetoes a move beyond slippage | Uses the bar's quote, since a one-minute bar has no intra-bar book | Both arms face the same quote and the same slippage cap |
 | A guard veto stops the whole worker | A veto blocks that bar only; the run continues | A season needs many observations, and the guard runs before the neural step either way, so no arm sees a bar the other did not |
-| Checkpoints the brain every tick | No mid-run checkpoint by default | 100 MB of synapses per fly per bar. `--checkpoint-every` restores upstream behaviour when you want resume |
+| Checkpoints the brain every tick | One checkpoint per arm, at the end of the last season of a run, and only when `--save-brains` names a directory | There is no `--checkpoint-every`: a mid-run checkpoint is ~7 MB per fly per bar uncompressed and buys nothing for a replay, which is never resumed. `save_brains` also refuses to overwrite, so a campaign cannot silently replace the brains an earlier result came from |
 | Can place real orders through Coinbase | Cannot: `stonkfly.actions` is never imported, and the Coinbase SDKs are not dependencies | Paper only, by construction rather than by flag |
 
 One consequence worth stating: if an arm trips the 20 USDC loss stop, upstream's guard
@@ -64,10 +64,16 @@ every return so a barely-invested fly is not compared as if it were fully invest
 
 ## Repetition
 
-`--repeats N` runs N disjoint seasons of the same construction:
+`--repeats N` runs N seasons of the same construction:
 
-- Synthetic: a different seed per repeat.
-- Coinbase: the window steps back a whole season per repeat, so no two repeats share a bar.
+- Synthetic: a different seed per repeat, so the price paths are unrelated.
+- Coinbase: the window steps back one season per repeat, and the step counts *bars*, not
+  minutes. This distinction matters: the exchange omits minutes with no trades, so a 48-bar
+  season spans about 64 minutes, and stepping back 48 minutes left each season sharing roughly
+  a dozen bars with the next. Before v2 of the market cache that is what happened, so early
+  campaigns in this repository overlap their neighbours. `--must-not-overlap <run id or label>`
+  now makes the property checkable: a season that shares any bar with the named recording is
+  refused rather than run.
 
 `flyvsly report` groups them and prints the paired difference (memory-on minus memory-off)
 per season, the mean, the spread, and the win counts. With a handful of seasons the spread

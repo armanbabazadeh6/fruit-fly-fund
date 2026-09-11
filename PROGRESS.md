@@ -25,6 +25,15 @@ Paused with a clean tree at `9ffce9c`. The two remaining exam runs (`exam-reset`
 Both are tested, including the case where the wrong settings are handed in. The two invalid
 recordings were deleted rather than reported.
 
+**Docs corrected after an audit**
+
+A read-only audit checked every number and claim in the docs against the recordings. Fixed:
+the two campaigns' "disjoint seasons" claim (they overlap, and the spread across them
+understates market variation), a `docs/fairness.md` table describing a `--checkpoint-every`
+flag that does not exist, a `docs/hardware.md` line claiming different default bar counts per
+engine, a README test count of 33 when the suite is 124, and a `docs/telemetry.md` schema
+example that reused a real run id with numbers that were not that run's.
+
 **Where the three requested features stand**
 
 1. **Exam (held-out)** — built and tested, but **not yet run validly** (see the bug above).
@@ -73,7 +82,11 @@ controls listed below.
 ### First result
 
 `flyvsly run --engine neural --market coinbase --bars 48 --repeats 3` — 48 one-minute
-candles per season, three disjoint windows, both flies on the retained graph:
+candles per season, three windows that **overlap their neighbours** — the offset between them
+counted minutes while a 48-bar season spans ~64, so each shared about 12 bars with the next.
+Within-season comparisons are unaffected (both flies trade the same bars); cross-season
+independence is not what this table's spread suggests. Row-counted offsets and a
+`--must-not-overlap` guard exist now, and the runs below predate them:
 
 | | memory ON | memory OFF | buy & hold |
 | --- | --- | --- | --- |
@@ -107,9 +120,10 @@ seasons, and the paired difference is smaller than its own spread. Archived as r
   wall time, memory changed-edge count and efficacy, the decision explanation with the
   measured values and the programmed rule, the order plan, the fill, and the portfolio.
   Written to `recording.json`, `manifest.json` and `observations.jsonl`.
-- **Repetition.** `--repeats N` uses N disjoint seasons (different seeds, or whole-season
-  window steps for Coinbase data). `flyvsly report` prints paired deltas, spread and win
-  counts, with a note that few seasons cannot settle anything.
+- **Repetition.** `--repeats N` uses N seasons (different synthetic seeds, or a whole-season
+  row-counted step for Coinbase data, plus `--must-not-overlap` to prove the season is
+  disjoint from the run it is graded against). Runs made before the row-counted offset overlap
+  their neighbours, which is recorded here rather than quietly re-scored.
 - **Server.** Standard library only, localhost, static bundle + JSON API + SSE live feed,
   plus `POST /api/runs` so the browser can start a run.
 - **Browser experience.** Two animated flies at desks, live scoreboard, equity and price

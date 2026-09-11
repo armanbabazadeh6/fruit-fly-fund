@@ -52,9 +52,10 @@ procedural one about 2 MB, so recordings are cheap to keep and to publish.
   the same thing. Do not expect a speedup from the discrete GPU.
 - **No full-graph test on every run.** `FLYVSLY_NEURAL_TEST=1 pytest -m slow` builds extra
   brains and takes about a minute; it is opt-in.
-- **No 480-bar neural seasons by default.** The CLI default is 48 bars for the neural
-  engine and 480 for the procedural one, which is a statement about what the laptop can do,
-  not about what the experiment deserves.
+- **No long neural seasons by default.** `flyvsly run --bars` defaults to 48 regardless of
+  engine; the procedural demo simply finishes 480 bars in seconds because it has no brain to
+  integrate. 48 is a statement about what the laptop can afford, not about what the experiment
+  deserves.
 
 ## Moving to the desktop (32 GB, RTX 2080)
 

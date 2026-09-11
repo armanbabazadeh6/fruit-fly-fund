@@ -145,13 +145,22 @@ def save_brains(directory, backends: dict) -> dict:
 
 
 def apply(weights: StartingWeights, backend) -> dict:
-    """Put a backend into the state ``weights`` names, and report what was done.
+    """Put a backend into the state ``weights`` names, and keep it there.
 
-    ``reset`` mirrors upstream's own ``MemoryBrain.reset`` line for wiping learned
-    efficacies (``weight[edges] = baseline_plastic``), so a reset brain is element-wise
-    the brain the reconstructed graph would have produced; the non-plastic remainders of
-    the weight array are whatever the checkpoint held, which is what makes the reset a
-    control for the checkpoint rather than a fresh baseline.
+    Two things about upstream's `MemoryBrain` matter here, and both were learned the hard way:
+
+    - `restore()` copies `weights_frozen` out of the checkpoint. A checkpoint saved after a
+      learning run carries `False`, so restoring it re-enabled the weight write and the frozen
+      arm kept rewriting its plastic efficacies — at 500 ms per bar — from the restored
+      `memory_w`. The recording said `learning=False` and `both_frozen: true` while the weights
+      were moving, which is the exact failure this project exists to avoid.
+    - `step()` recomputes `weight[edges] = baseline_plastic * (1 + memory_w)` on every step
+      while that flag is False, so wiping the efficacies for a reset was undone on the very
+      next bar.
+
+    Freezing the flag closes both: an exam arm's weights are then exactly what it was handed.
+    The reset also zeroes `memory_u`/`memory_w`, because the trained deviations are what the
+    rewrite would otherwise reinstate.
     """
     if weights.kind == "baseline":
         return {"applied": False, "reason": "baseline weights"}
@@ -161,8 +170,13 @@ def apply(weights: StartingWeights, backend) -> dict:
     # Counted after the restore and before any wipe: this is the evidence that the
     # checkpoint carried learning, and not merely a relabelled copy of the baseline.
     changed = int(np.count_nonzero(brain.weight[edges] != brain.baseline_plastic))
+    zeroed = 0
     if weights.kind == "reset":
         brain.weight[edges] = brain.baseline_plastic
+        zeroed = int(np.count_nonzero(brain.memory_w))
+        brain.memory_u[:] = 0
+        brain.memory_w[:] = 0
+    brain.weights_frozen = True
     return {
         "applied": True,
         "kind": weights.kind,
@@ -170,4 +184,9 @@ def apply(weights: StartingWeights, backend) -> dict:
         "file": str(weights.path),
         "plastic_edges": int(len(edges)),
         "changed_before_reset": changed,
+        "changed_after_apply": int(
+            np.count_nonzero(brain.weight[edges] != brain.baseline_plastic)
+        ),
+        "memory_deviations_zeroed": zeroed,
+        "weights_frozen": bool(brain.weights_frozen),
     }

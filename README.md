@@ -31,8 +31,13 @@ reacts to its own fills, and every number on a screen comes from the recording.*
 
 ## First result, and how to read it
 
-Three disjoint seasons of real public BTC-USDC one-minute candles, 48 bars each, both flies
-on the retained graph:
+Three seasons of real public BTC-USDC one-minute candles, 48 bars each, both flies on the
+retained graph. **These windows overlap** — the offset used to step between them counted
+minutes while a 48-bar season spans about 64 of them, so each season shared roughly 12 bars
+with the next. That does not affect any within-season comparison (both flies trade the same
+bars), but it does mean these are not three independent markets, and the spread below therefore
+understates how much a genuinely different market can move the result. Row-counted offsets and
+a `--must-not-overlap` guard are in place now; the runs below predate them.
 
 | | memory ON (Gordon) | memory OFF (Warren) | buy & hold |
 | --- | --- | --- | --- |
@@ -158,7 +163,8 @@ flyvsly doctor --measure     # what this machine can actually run
 Run the competition, paper only:
 
 ```sh
-# Real public Coinbase BTC-USDC candles, 48 one-minute bars, three disjoint seasons.
+# Real public Coinbase BTC-USDC candles, 48 one-minute bars, three seasons (see the note
+# above: seasons from before the row-counted offset overlap their neighbours).
 flyvsly run --engine neural --market coinbase --bars 48 --repeats 3 --label season-coinbase-48
 
 # Offline and reproducible: synthetic seasons on a fixed seed.
@@ -225,14 +231,16 @@ runs/  data/      local only, git-ignored
 ## Tests
 
 ```sh
-python -m pytest -q                                  # 33 fast tests
+python -m pytest -q                                  # 124 fast tests
 FLYVSLY_NEURAL_TEST=1 python -m pytest -q -m slow    # + the real 166,700-neuron check
 ```
 
-The gated test proves the control arm's 7,835 eligible efficacies never move while the
+The gated tests prove the control arm's 7,835 eligible efficacies never move while the
 experimental arm's do, that both flies received byte-identical retinal input on every bar,
 and that the neural arm's output is unchanged when the arena passes it a different price
-history.
+history. The fast suite covers fairness, execution parity against upstream's guard, market
+seasons, the recorded-ledger reconciliation, the activity controls, and the exam/reset
+protocol including the failure modes this project shipped and had to fix.
 
 ## Attribution
 

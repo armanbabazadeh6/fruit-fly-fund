@@ -39,6 +39,12 @@ INCREMENTS = {
 
 COINBASE_CANDLES = "https://api.exchange.coinbase.com/products/{product}/candles"
 
+# Bump when the *fetch semantics* change, not just the parameters. The cache is keyed by
+# product/offset/bars, so a change in what an offset means would otherwise be served from
+# files an older build wrote — which is exactly how a fixed window offset kept producing
+# overlapping seasons. v2: `window_offset_bars` counts rows rather than minutes.
+CACHE_VERSION = 2
+
 
 def _seed_stream(seed: int):
     """Deterministic uniform stream: independent of Python/NumPy RNG internals."""
@@ -124,23 +130,31 @@ def _fetch_coinbase(
 
     The window is anchored to the newest bucket the exchange actually has — not to this
     machine's clock — so a cached season is reproducible even where the local clock and the
-    exchange disagree, and a recorded run never depends on wall time. `offset_bars` steps a
-    whole season further back, which is how repeated runs sample different market stretches.
+    exchange disagree, and a recorded run never depends on wall time.
+
+    `offset_bars` counts *bars*, not minutes: the endpoint omits minutes with no trades, so a
+    48-bar season spans about 64 minutes of market time and stepping back 48 minutes leaves a
+    quarter of the "new season" inside the previous one. Fetching `bars + offset` rows and
+    keeping the older `bars` of them makes the offset mean what its name says.
+
     The public endpoint ignores `end` on its own, so both bounds are always sent.
     """
     rows: dict[int, list] = {}
+    wanted = bars + max(0, offset_bars)
     if start_iso:
         start = int(_iso_seconds(start_iso))
-        end = start + bars * bar_seconds
+        end = start + wanted * bar_seconds
     else:
         probe = _candles(product, bar_seconds)
         if not probe:
             raise RuntimeError(f"Coinbase returned no recent candles for {product}")
         newest = max(int(row[0]) for row in probe)
-        end = newest - bar_seconds * (1 + offset_bars)
-        start = end - (bars - 1) * bar_seconds
-    # The endpoint omits minutes with no trades, so a window can come back short. Widen
-    # it backwards and retry rather than pretending the missing minutes exist.
+        # `wanted` rows ending at the newest completed bucket; the offset is applied by
+        # dropping rows from the end below, so it counts bars whatever the gaps are.
+        end = newest - bar_seconds
+        start = end - (wanted - 1) * bar_seconds
+    # The endpoint omits minutes with no trades, so a window can come back short. Widen it
+    # backwards and retry rather than pretending the missing minutes exist.
     attempts = 0
     while True:
         cursor = start
@@ -152,18 +166,22 @@ def _fetch_coinbase(
                     rows[timestamp] = row
             cursor = chunk_end + bar_seconds
         completed = [rows[t] for t in sorted(rows)]
-        if len(completed) >= bars or attempts >= 6:
+        if len(completed) >= wanted or attempts >= 6:
             break
         attempts += 1
-        start -= (bars - len(completed)) * bar_seconds
-    required = bars if minimum is None else minimum
-    if len(completed) < required:
+        start -= (wanted - len(completed)) * bar_seconds
+
+    # The offset shifts the window back by whole rows, whatever the gaps are. `end_index` is
+    # the row the season ends at; the window is the `bars` rows before it.
+    end_index = len(completed) - max(0, offset_bars)
+    floor = bars if minimum is None else minimum
+    if end_index - bars < 0 or len(completed[:end_index]) < floor:
         raise RuntimeError(
-            f"Coinbase returned {len(completed)} completed bars, need {required} "
-            f"({_iso(start)} to {_iso(end)}). Check the requested window."
+            f"Coinbase returned {len(completed)} completed bars, need {wanted} "
+            f"({_iso(start)} to {_iso(end)}) to place a {bars}-bar window {offset_bars} bars "
+            "back. Check the requested window or reduce the offset."
         )
-    window = completed[-bars:]
-    warmup = len(window) - required
+    window = completed[end_index - bars : end_index]
     return {
         "bars": [{"t": int(r[0]), "close": float(r[4])} for r in window],
         "raw_sha256": hashlib.sha256(
@@ -173,8 +191,9 @@ def _fetch_coinbase(
         "requested_start": start_iso,
         "window_start": _iso(window[0][0]),
         "window_end": _iso(window[-1][0]),
-        "truncated_warmup": warmup < 0,
-        "warmup_bars": max(0, warmup),
+        "truncated_warmup": len(window) - bars < 0,
+        "warmup_bars": max(0, len(window) - bars),
+        "offset_bars": offset_bars,
     }
 
 
@@ -292,7 +311,7 @@ def build_season(spec, cache_dir="data/markets") -> Season:
             },
         )
     window = (spec.start_iso or f"auto-{spec.window_offset_bars}").replace(":", "")
-    name = f"{spec.product}-{spec.bar_seconds}s-{window}-{spec.bars}.json"
+    name = f"{spec.product}-{spec.bar_seconds}s-v{CACHE_VERSION}-{window}-{spec.bars}.json"
     path = cache / name
     if path.exists():
         payload = json.loads(path.read_text())

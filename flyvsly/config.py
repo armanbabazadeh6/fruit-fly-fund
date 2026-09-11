@@ -98,8 +98,11 @@ class ArenaRules:
     # same model file is used for both flies: the model is shared, the brain is not.
     readout: str | None = None
     # On the readout's own score scale, which is log-odds and therefore not bounded by 1.
-    # `flyvsly fitreadout` reports the score percentiles so this can be chosen from data.
-    readout_margin: float = 0.15
+    # None means "use the value stored with the model" (`flyvsly fitreadout` records the score
+    # percentiles for exactly this). A leftover 0.15 from reading the score as a probability
+    # silently disabled the HOLD band: at margin 0.15 the recorded model held on 2 of 48 bars
+    # where the model's own suggested margin held on 40.
+    readout_margin: float | None = None
 
     def as_settings_kwargs(self, learning: bool) -> dict:
         # Upstream's Settings knows nothing about our extensions, so they are stripped here
@@ -121,6 +124,8 @@ class ArenaRules:
             )
         if self.population_sample < 0:
             raise ValueError("population_sample cannot be negative")
+        if self.readout_margin is None:
+            return self
         if not math.isfinite(self.readout_margin) or self.readout_margin <= 0:
             raise ValueError(
                 "readout_margin must be a positive finite number on the readout's own score "
@@ -167,6 +172,8 @@ class MarketSpec:
             )
         if self.population_sample < 0:
             raise ValueError("population_sample cannot be negative")
+        if self.readout_margin is None:
+            return self
         if not math.isfinite(self.readout_margin) or self.readout_margin <= 0:
             raise ValueError(
                 "readout_margin must be a positive finite number on the readout's own score "
@@ -201,6 +208,9 @@ class ArenaConfig:
     # A reference recording whose population vectors are fitted into a readout, and the
     # label to record as provenance for it.
     fit_readout: Path | None = None
+    # A run id or label this season must NOT share bars with. An exam is only an exam if the
+    # market it is graded on was genuinely unseen, and the offset is easy to get wrong.
+    must_not_overlap: str | None = None
     thread_arms: bool = True         # arms are independent; the native kernel releases the GIL
     max_wall_seconds: float | None = None
 

@@ -20,12 +20,30 @@ EDGES = np.array([1, 3, 4, 8], dtype=np.int64)
 
 
 class FakeBrain:
-    """The only brain members ``starting`` may touch; anything else is a bug."""
+    """The only brain members ``starting`` may touch; anything else is a bug.
 
-    def __init__(self, weight, edges=EDGES):
+    `weights_frozen` and the memory deviations are modelled because upstream's `restore()`
+    overwrites the flag from the checkpoint and `step()` rewrites the plastic weights from
+    `memory_w` on every step while it is False — which is how a "frozen" exam arm kept moving
+    its weights, and how a reset got undone on the next bar.
+    """
+
+    def __init__(self, weight, edges=EDGES, weights_frozen=False, deviations=0):
         self.weight = np.asarray(weight, dtype=np.float32).copy()
         self.circuit = {"edges": np.asarray(edges, dtype=np.int64)}
         self.baseline_plastic = self.weight[self.circuit["edges"]].copy()
+        # A checkpoint from a learning run carries False, which is the whole trap.
+        self.weights_frozen = bool(weights_frozen)
+        self.memory_u = np.zeros(len(self.circuit["edges"]), dtype=np.float64)
+        self.memory_w = np.zeros(len(self.circuit["edges"]), dtype=np.float64)
+        if deviations:
+            self.memory_u[:deviations] = 0.05
+            self.memory_w[:deviations] = 0.05
+
+    def step_rewrite(self):
+        """Upstream's rule: while the flag is False, weights are recomputed from memory_w."""
+        if not self.weights_frozen:
+            self.weight[self.circuit["edges"]] = self.baseline_plastic * (1 + self.memory_w)
 
     def __getattr__(self, name):
         raise AssertionError(f"FakeBrain does not model {name!r}")
@@ -40,9 +58,18 @@ class FakeController:
     def restore(self, path):
         with np.load(path, allow_pickle=False) as archive:
             saved = archive["weight"]
+            frozen = bool(archive["weights_frozen"]) if "weights_frozen" in archive.files else False
+            # Upstream's checkpoint stores the rule's deviations too (they are in `fields`),
+            # and they are what `step` rewrites the efficacies from.
+            deviations = {
+                key: archive[key] for key in ("memory_u", "memory_w") if key in archive.files
+            }
         if saved.shape != self.brain.weight.shape:
             raise ValueError("Checkpoint array mismatch")
         self.brain.weight[:] = saved
+        for key, value in deviations.items():
+            getattr(self.brain, key)[:] = value
+        self.brain.weights_frozen = frozen
 
     def __getattr__(self, name):
         raise AssertionError(f"FakeController does not model {name!r}")
@@ -53,7 +80,14 @@ class FakeBackend:
         self.controller = FakeController(FakeBrain(weight, edges))
 
     def save(self, path):
-        np.savez_compressed(path, weight=self.controller.brain.weight)
+        brain = self.controller.brain
+        np.savez_compressed(
+            path,
+            weight=brain.weight,
+            weights_frozen=brain.weights_frozen,
+            memory_u=brain.memory_u,
+            memory_w=brain.memory_w,
+        )
 
     def __getattr__(self, name):
         raise AssertionError(f"FakeBackend does not model {name!r}")
@@ -72,9 +106,10 @@ def trained_backend():
 
 
 def test_fake_brain_refuses_unmodelled_attributes():
+    """The canary: if `starting` reaches for something the fake does not model, it says so."""
     brain = FakeBrain(base_weight())
-    with pytest.raises(AssertionError, match="memory_w"):
-        brain.memory_w
+    with pytest.raises(AssertionError, match="does not model"):
+        brain.dopamine_levels
 
 
 def test_parse_baseline():
@@ -254,3 +289,54 @@ def test_apply_baseline_changes_nothing():
         "reason": "baseline weights",
     }
     assert np.array_equal(backend.controller.brain.weight, before)
+
+
+def test_a_restored_brain_is_frozen_even_when_the_checkpoint_was_not(tmp_path):
+    """The bug shipped twice: `restore()` brings the checkpoint's `weights_frozen=False` with it.
+
+    Upstream's `step()` rewrites `weight[edges]` from `baseline_plastic * (1 + memory_w)` while
+    that flag is False, so the "frozen" exam arm kept moving its weights — at 500 ms of neural
+    time per bar — and a reset was undone on the next bar. `apply` must leave it frozen.
+    """
+    source = trained_backend()
+    source.controller.brain.weights_frozen = False  # as a learning-run checkpoint records it
+    save_brains(tmp_path, {"gordon": source})
+
+    target = FakeBackend(base_weight())
+    report = apply(parse(f"trained:{tmp_path / 'gordon.npz'}"), target)
+    brain = target.controller.brain
+
+    assert report["weights_frozen"] is True
+    assert brain.weights_frozen is True
+    assert report["changed_after_apply"] == report["changed_before_reset"] > 0
+
+    # Behaviour, not just a flag: the rewrite can no longer move the weights.
+    before = brain.weight.copy()
+    brain.step_rewrite()
+    assert np.array_equal(before, brain.weight)
+
+
+def test_a_reset_brain_stays_reset(tmp_path):
+    """Wiping the efficacies is not enough: the deviations that recreate them are zeroed too."""
+    source = trained_backend()
+    source.controller.brain.weights_frozen = False
+    source.controller.brain.memory_w[:] = 0.05
+    source.controller.brain.memory_u[:] = 0.05
+    save_brains(tmp_path, {"gordon": source})
+
+    target = FakeBackend(base_weight())
+    report = apply(parse(f"reset:{tmp_path / 'gordon.npz'}"), target)
+    brain = target.controller.brain
+
+    assert report["changed_before_reset"] == len(EDGES)
+    assert report["changed_after_apply"] == 0
+    assert report["memory_deviations_zeroed"] == len(EDGES)
+    assert report["weights_frozen"] is True
+    assert np.array_equal(brain.weight[EDGES], brain.baseline_plastic)
+    assert not brain.memory_u.any() and not brain.memory_w.any()
+
+    # The sharp prediction, as behaviour: even with the flag forced off, the rewrite recomputes
+    # the baseline rather than reinstating the trained values.
+    brain.weights_frozen = False
+    brain.step_rewrite()
+    assert np.array_equal(brain.weight[EDGES], brain.baseline_plastic)

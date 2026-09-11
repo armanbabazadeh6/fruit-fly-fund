@@ -87,18 +87,22 @@ def assert_exam_is_fair(kind: str, starting: dict, on=None, off=None) -> dict:
     # settings rather than asserting the intention. The first version of this returned
     # `both_frozen: True` unconditionally, and the run it described had learning on for one
     # fly: the recording claimed a property the run did not have.
-    if on is not None and off is not None:
-        for name, settings in (("experimental", on), ("control", off)):
-            if settings.learning:
-                raise AssertionError(
-                    f"The {name} arm has learning enabled: an exam must freeze both flies"
-                )
-        left, right = _comparable(on), _comparable(off)
-        differing = sorted(k for k in set(left) | set(right) if left.get(k) != right.get(k))
-        if differing:
+    if on is None or off is None:
+        raise AssertionError(
+            "An exam's fairness check needs both arms' settings: reporting `both_frozen` "
+            "without inspecting them is the assertion this function exists to replace."
+        )
+    for name, settings in (("experimental", on), ("control", off)):
+        if settings.learning:
             raise AssertionError(
-                f"An exam must differ only in starting weights; these settings also differ: {differing}"
+                f"The {name} arm has learning enabled: an exam must freeze both flies"
             )
+    left, right = _comparable(on), _comparable(off)
+    differing = sorted(k for k in set(left) | set(right) if left.get(k) != right.get(k))
+    if differing:
+        raise AssertionError(
+            f"An exam must differ only in starting weights; these settings also differ: {differing}"
+        )
     return {
         "differing_fields": ["starting_weights"],
         "starting_weights": {

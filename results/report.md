@@ -7,6 +7,7 @@ the published ones live in `web/public/recordings/`.
 
 | campaign | engine | seasons | memory on | memory off | buy & hold | paired delta (on − off) | spread | wins on/off/tie | mean rewrites |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| `campaign-active-shuffled` | neural | 3 | -1.347% | -1.180% | -0.765% | **-0.167%** | ±0.076% | 0/3/0 | 3478.33 |
 | `campaign-active-pnl` | neural | 3 | -1.464% | -1.180% | -0.765% | **-0.284%** | ±0.215% | 1/2/0 | 3462.67 |
 | `season-coinbase-48` | neural | 3 | -1.000% | -0.908% | -0.765% | **-0.092%** | ±0.095% | 0/3/0 | 3442.33 |
 | `exam-readout` | neural | 1 | -0.068% | -0.194% | -0.706% | **+0.127%** | ±0.000% | 1/0/0 | 3386 |
