@@ -13,14 +13,21 @@ import * as THREE from 'three'
  * schematic geometry, measured activity — and the copy says so on screen.
  */
 
-export type CellGroup = 'dopamine' | 'decoder' | 'gate' | 'kenyon' | 'other'
+export type CellGroup = 'dopamine' | 'decoder' | 'gate' | 'descending' | 'kenyon' | 'other'
 
-/** Read the group out of a MaleCNS cell type, e.g. `PAM11`, `DNp20`, `KCg-m`. */
+/**
+ * Read the group out of a MaleCNS cell type, e.g. `PAM11`, `DNp20`, `KCg-m`.
+ *
+ * The sampled population is mostly descending neurons — the cells that carry the brain's
+ * output — so they get their own colour rather than falling through to grey, and the few the
+ * decoder actually reads are picked out of them.
+ */
 export function groupForType(type: string): CellGroup {
   if (type.startsWith('DNp20')) return 'decoder'
   if (type.startsWith('DNpe017')) return 'gate'
   if (type.startsWith('PAM') || type.startsWith('PPL')) return 'dopamine'
   if (type.startsWith('KC')) return 'kenyon'
+  if (type.startsWith('DN')) return 'descending'
   return 'other'
 }
 
@@ -28,6 +35,7 @@ const COLOURS: Record<CellGroup, number> = {
   dopamine: 0xffb454,
   decoder: 0x64dfff,
   gate: 0xcc9eff,
+  descending: 0x7fd1c0,
   kenyon: 0xc7e8ad,
   other: 0x8fa3b8,
 }
@@ -37,6 +45,7 @@ const CLUSTERS: Record<CellGroup, [number, number, number]> = {
   dopamine: [-0.28, 0.16, 0.06],
   decoder: [0.28, 0.14, 0.02],
   gate: [0, -0.22, 0.08],
+  descending: [0, -0.02, 0],
   kenyon: [0, 0.28, -0.14],
   other: [0, 0.02, 0.24],
 }
