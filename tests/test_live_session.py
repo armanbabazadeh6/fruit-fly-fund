@@ -173,3 +173,46 @@ def test_live_session_is_never_an_exam(tmp_path):
         Arena(config).run_live(
             feed_for(clock, EPOCH - 3 * BAR), run_id="live-exam", out_root=tmp_path
         )
+
+
+def test_a_live_session_checkpoints_while_it_trades(tmp_path):
+    """A session that never reaches its last bar must still read as the session it was."""
+    clock = Clock(EPOCH)
+    feed = feed_for(clock, EPOCH - 3 * BAR)
+    arena = arena_for(tmp_path)
+    midway = {}
+
+    def on_event(kind, payload):
+        if kind == "live_progress":
+            path = tmp_path / "live-mid" / "live_state.json"
+            state = json.loads(path.read_text()) if path.exists() else None
+            lines = (tmp_path / "live-mid" / "observations.jsonl")
+            midway[payload["bars"]] = {
+                "bars_traded": (state or {}).get("bars_traded"),
+                "status": (state or {}).get("status"),
+                "lines": len(lines.read_text().strip().splitlines()) if lines.exists() else 0,
+            }
+
+    def handler(kind, payload):
+        on_event(kind, payload)
+        if kind == "live_progress":
+            stop_after.append(payload)
+
+    stop_after = []
+    arena.on_event = handler
+    recording = arena.run_live(
+        feed, run_id="live-mid", out_root=tmp_path, stop=lambda: len(stop_after) >= 3
+    )
+
+    # Written during the session, not only at the end: by the time bar 2 is announced, bar 2
+    # is already on disk.
+    assert midway[1]["bars_traded"] == 1
+    assert midway[2]["bars_traded"] == 2
+    assert midway[2]["status"] == "running"
+    assert midway[2]["lines"] == 2
+
+    # And the finished checkpoint agrees with the recording it belongs to.
+    final = json.loads((tmp_path / "live-mid" / "live_state.json").read_text())
+    assert final["status"] == "finished"
+    assert final["bars_traded"] == len(recording["observations"]) == 3
+    assert final["summary"]["bars"] == 3

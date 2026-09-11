@@ -806,6 +806,9 @@ class Arena:
         times = []
         processed = 0
         lag = 0.0
+        # A session states itself from the first moment, before it has traded anything: an
+        # interrupted session must be visible as a session, not as an empty directory.
+        self._checkpoint_live(out, season, feed, session_opened, lag, processed)
         try:
             while not stop():
                 if not feed.poll():
@@ -825,6 +828,9 @@ class Arena:
                         feed.clock() - (season.timestamp(processed - 1) + config.market.bar_seconds),
                         3,
                     )
+                    # Durable first, announce second: a bar that reached the page but not
+                    # the disk would be a bar nobody can audit.
+                    self._checkpoint_live(out, season, feed, session_opened, lag, processed)
                     self.emit(
                         "live_progress",
                         bars=processed,
@@ -835,7 +841,7 @@ class Arena:
         finally:
             self._close_arms(arms, threads)
         self._finish_bar_loop(times)
-        return self._finalise(
+        recording = self._finalise(
             run_id=run_id,
             season=season,
             arms=arms,
@@ -859,6 +865,50 @@ class Arena:
                     "lag_seconds_at_end": lag,
                     "polls": feed.polls,
                 }
+            },
+        )
+        # The checkpoint is the live view of the same session; it stops saying "running" only
+        # once the recording it belongs to is on disk.
+        checkpoint = out / "live_state.json"
+        if checkpoint.exists():
+            state = json.loads(checkpoint.read_text())
+            state["status"] = "finished"
+            state["bars_traded"] = len(self.observations)
+            state["summary"] = recording["summary"]
+            write_recording(checkpoint, state)
+        return recording
+
+    def _checkpoint_live(self, out, season, feed, session_opened, lag, processed):
+        """Make the session's own record durable as it trades.
+
+        A live session can be stopped, powered off or killed at any minute. Each arm's SQLite
+        ledger is already durable bar by bar; this appends the observation and rewrites a small
+        state file, so a session that never reached its last bar still reads as the session it
+        was. The final artifacts are rewritten whole by `_finalise`.
+        """
+        if self.observations:
+            with (out / "observations.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(self.observations[-1], default=str) + "\n")
+        write_recording(
+            out / "live_state.json",
+            {
+                "schema": SCHEMA_VERSION,
+                "run_id": out.name,
+                "status": "running",
+                "product": season.spec.product,
+                "bar_seconds": season.spec.bar_seconds,
+                "warmup_bars": season.warmup_bars,
+                "session_opened": session_opened,
+                "bars_traded": processed,
+                "last_bar": season.timestamp(processed - 1) if processed else None,
+                "lag_seconds": lag,
+                "polls": feed.polls,
+                # What a restart can and cannot pick up, stated rather than implied.
+                "on_restart": {
+                    "market": "the window is rebuilt from the public candles for these bars",
+                    "accounts": "durable: each arm writes its own SQLite ledger per bar",
+                    "brain": "in memory only: learned efficacies are saved by --save-brains",
+                },
             },
         )
 
