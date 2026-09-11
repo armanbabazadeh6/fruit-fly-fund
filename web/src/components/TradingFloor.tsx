@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ArmMeta, ArmSummary, Observation, FlyMood } from '../lib/types'
+import type { ArmMeta, ArmSummary, Observation, FlyMood, PopulationDescription } from '../lib/types'
 import { isNeural } from '../lib/types'
 import { compact, signedPct, tone, usd } from '../lib/format'
 import { Desk } from './Desk'
@@ -17,6 +17,8 @@ interface TradingFloorProps {
   live: boolean
   initialCapital: string
   product: string
+  /** The cells this run's population vectors describe, recorded once per run. */
+  population?: PopulationDescription | null
 }
 
 function webglAvailable(): boolean {
@@ -74,6 +76,7 @@ export function TradingFloor({
   live,
   initialCapital,
   product,
+  population,
 }: TradingFloorProps) {
   const stageRef = useRef<HTMLDivElement | null>(null)
   const floorRef = useRef<FloorHandle | null>(null)
@@ -146,6 +149,8 @@ export function TradingFloor({
         memoryLine,
         neural: entry?.signal ? isNeural(entry.signal) : engine === 'neural',
         brainActivity: isNeural(entry?.signal) ? [entry.signal.left_hz,entry.signal.right_hz,entry.signal.KC_spikes,entry.signal.reward_spikes,entry.signal.gate_spikes,entry.signal.aversive_spikes] : [],
+        population: isNeural(entry?.signal) ? entry?.signal.population : undefined,
+        cellTypes: population?.types,
         halted: Boolean(entry?.portfolio.halted),
         trades: events,
         lastFill,
@@ -372,7 +377,7 @@ export function TradingFloor({
       )}
 
       {brain && <section className="brain-inspector" aria-label="Neural activity inspector">
-        <div className="brain-caption"><span className="eyebrow">02 / INSIDE THE MIND</span><h2>Every decision starts <br/>with a spark.</h2><p>Measured activity, schematic anatomy. Each glowing cluster represents a recorded signal group; paths and pulses illustrate activity, not individual neuron locations or spike timing.</p></div>
+        <div className="brain-caption"><span className="eyebrow">02 / INSIDE THE MIND</span><h2>Every decision starts <br/>with a spark.</h2><p>Measured activity, schematic anatomy. One dot per measured cell in the recorded population{population ? ` (${population.size} cells: ${Object.entries(population.groups).map(([name, count]) => `${count} ${name}`).join(', ')})` : ''}, coloured by its annotated type and lit by its own spike count on this bar. Positions are illustrative — the simulation runs a graph, not a body.</p></div>
         {arms.map(arm=> {
           const signal=observation?.arms[arm.id]?.signal
           if(!isNeural(signal)) return <div className="brain-stats" key={arm.id}><h3>{arm.name}</h3><p>No neural measurements in this procedural recording.</p></div>

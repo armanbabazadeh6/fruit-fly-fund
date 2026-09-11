@@ -436,6 +436,7 @@ export default function App() {
           live={Boolean(live) && !live?.finished}
           initialCapital={initialCapital}
           product={observations[0]?.product ?? 'BTC-USDC'}
+          population={shown.run.population}
         />
 
         <Scoreboard

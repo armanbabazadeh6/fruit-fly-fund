@@ -48,6 +48,10 @@ export interface FloorArmState {
   memoryLine: string
   neural: boolean
   brainActivity?: number[]
+  /** Measured spike counts of the recorded population for this bar, in `cellTypes` order. */
+  population?: number[]
+  /** The run's cell identities, so the brain can draw one dot per measured cell. */
+  cellTypes?: string[]
   halted: boolean
   /** Most recent fills at or before the current bar, newest first, for the desk tape. */
   trades: { side: string; label: string }[]
@@ -456,7 +460,11 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
     for (const row of station.keyboard.caps) for (const cap of row) {
       (cap.material as THREE.MeshStandardMaterial).emissiveIntensity = 0
     }
-    station.fly.brain.update(station.arm?.brainActivity ?? [], reduced ? 0 : clock)
+    station.fly.brain.update(
+      station.arm?.population ?? [],
+      reduced ? 0 : clock,
+      station.arm?.cellTypes,
+    )
     station.fly.typingArms.forEach((arm, index) => {
       const strike = Math.max(0, Math.sin(tapPhase + index * Math.PI))
       arm.rotation.set(0,0,0)
@@ -701,6 +709,7 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
             return bounds
           })(),
           deskNdc: ndcBounds(station.desk),
+          brain: { cells: station.fly.brain.cellCount, lit: station.fly.brain.litCount },
           lampNdc: ndcBounds(station.lamp),
           cupNdc: ndcBounds(station.cup),
           visible: {
