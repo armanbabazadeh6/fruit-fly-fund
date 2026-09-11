@@ -294,7 +294,7 @@ class _ArmThread(threading.Thread):
                 self.arena.rules,
                 backend,
                 self.arena.out_dir,
-                VirtualClock(self.arena.season.timestamp(0)),
+                VirtualClock(self.arena._clock_start()),
                 starting=self.arena.starting_for(self.persona["id"]),
             ).open_account()
             self.arm_obj.apply_starting()
@@ -421,12 +421,52 @@ class Arena:
             arms = self._run_parallel(run_id, season, out)
         else:
             arms = self._run_sequential(out)
+        return self._finalise(
+            run_id=run_id,
+            season=season,
+            arms=arms,
+            started=started,
+            repeat=repeat,
+            overlap=overlap,
+            conditions=conditions,
+            out=out,
+            wall_mode=(
+                "accelerated replay: one completed market bar per observation, no "
+                "wall-clock waiting"
+            ),
+        )
+
+    def _finalise(
+        self,
+        run_id,
+        season,
+        arms,
+        started,
+        repeat,
+        overlap,
+        conditions,
+        out,
+        wall_mode,
+        extra=None,
+    ):
+        """Summarise a finished run, write its recording, and return it.
+
+        Shared by a fixed season and a live session, so both produce the same artifact. The
+        only differences are the wall-clock note and whatever the caller puts in `extra`.
+        """
+        config, rules = self.config, self.rules
         duration = time.time() - started
 
-        benchmarks = {
-            "buy_and_hold": buy_and_hold(season, D(rules.capital), D(rules.paper_fee)),
-            "cash": cash(season, D(rules.capital)),
-        }
+        # A live session can end before the exchange closes its first bar. There is no market
+        # to benchmark against then, and an empty block says so rather than inventing a 0%.
+        benchmarks = (
+            {
+                "buy_and_hold": buy_and_hold(season, D(rules.capital), D(rules.paper_fee)),
+                "cash": cash(season, D(rules.capital)),
+            }
+            if season.bars
+            else {}
+        )
         summary = {
             "bars": season.bars,
             "initial_capital": str(D(rules.capital)),
@@ -467,6 +507,8 @@ class Arena:
                 "Run several seasons before reading anything into this number."
             ),
         }
+        if extra:
+            summary.update(extra)
 
         recording = {
             "schema": SCHEMA_VERSION,
@@ -500,11 +542,9 @@ class Arena:
                 "duration_seconds": summary["duration_seconds"],
                 "seconds_per_bar_mean": summary["seconds_per_bar_mean"],
                 "truncated": summary["truncated"],
-                "wall_mode": (
-                    "accelerated replay: one completed market bar per observation, no "
-                    "wall-clock waiting"
-                ),
+                "wall_mode": wall_mode,
                 "inputs_identical_every_bar": self.inputs_identical,
+                **(extra or {}),
             },
             "arms": [arm.describe() for arm in arms],
             "season": {
@@ -559,50 +599,63 @@ class Arena:
 
     def _run_sequential(self, out):
         """Procedural arms are microseconds per bar; no threads, no surprises."""
-        arms = []
-        for index, persona in enumerate(self.personas):
-            settings = arm_settings(self.rules, persona["learning"])
-            backend = _build_backend(
-                self.config.engine,
-                settings,
-                self.data_root,
-                self.config.market.seed + index,
-                self.rules,
-            )
-            arm = Arm(
-                persona,
-                self.rules,
-                backend,
-                out,
-                VirtualClock(self.season.timestamp(0)),
-                starting=self.starting_for(persona["id"]),
-            ).open_account()
-            # Same as the threaded path: without this a sequential run silently ignored
-            # `--starting` and ran both flies from the baseline. The CLI refuses exam and reset
-            # on the procedural engine, so it was reachable only through the library.
-            arm.apply_starting()
-            arms.append(arm)
-        self.emit("arms_ready", arms=[arm.describe() for arm in arms])
-        self.observations = []
-        self.seconds_per_bar_mean = 0.0
-        self.truncated = False
-        self.inputs_identical = True
+        arms, threads = self._open_arms(out)
+        self._begin_bar_loop()
         times = []
-        for i in range(self.season.bars):
-            context = self._context(i)
-            per_arm = {}
-            for arm in arms:
-                arm.clock.set(context["timestamp"])
-                per_arm[arm.id] = self._bar(arm, context)
-                arm.curve.append(float(per_arm[arm.id]["portfolio"]["equity"]))
-            self._publish(i, context, times, per_arm)
-        self.seconds_per_bar_mean = round(sum(times) / len(times), 4) if times else 0.0
-        for arm in arms:
-            arm.close()
+        try:
+            for i in range(self.season.bars):
+                self._step(arms, threads, i, times)
+        finally:
+            self._close_arms(arms, threads)
+        self._finish_bar_loop(times)
         return arms
 
-    def _run_parallel(self, run_id, season, out):
-        """One thread per arm. Both arms receive the same frame object every bar."""
+    # -- arm lifecycle, shared by fixed seasons and live sessions --------------------
+
+    def _clock_start(self):
+        """The market time a fresh account starts on.
+
+        A fixed season starts at its bar 0. A live session has no bar 0 at the moment its
+        accounts open — the exchange has not closed one yet — so it starts on the open time
+        of the bar that is about to arrive.
+        """
+        if self.season.bars:
+            return self.season.timestamp(0)
+        return int(getattr(self.season, "next_bar_opened", 0))
+
+    def _open_arms(self, out):
+        """Build both arms and, for the neural engine, their threads.
+
+        Returns ``(arms, threads)``; ``threads`` is empty for the procedural engine, which
+        runs in the calling thread.
+        """
+        if self.config.engine != "neural":
+            arms = []
+            for index, persona in enumerate(self.personas):
+                settings = arm_settings(self.rules, persona["learning"])
+                backend = _build_backend(
+                    self.config.engine,
+                    settings,
+                    self.data_root,
+                    self.config.market.seed + index,
+                    self.rules,
+                )
+                arm = Arm(
+                    persona,
+                    self.rules,
+                    backend,
+                    out,
+                    VirtualClock(self._clock_start()),
+                    starting=self.starting_for(persona["id"]),
+                ).open_account()
+                # Same as the threaded path: without this a sequential run silently ignored
+                # `--starting` and ran both flies from the baseline. The CLI refuses exam and
+                # reset on the procedural engine, so it was reachable only through the library.
+                arm.apply_starting()
+                arms.append(arm)
+            self.emit("arms_ready", arms=[arm.describe() for arm in arms])
+            return arms, []
+
         threads = [
             _ArmThread(self, persona, index) for index, persona in enumerate(self.personas)
         ]
@@ -620,43 +673,200 @@ class Arena:
             raise failure
         arms = [thread.arm_obj for thread in threads]
         self.emit("arms_ready", arms=[arm.describe() for arm in arms])
+        return arms, threads
 
-        self.observations = []
-        self.seconds_per_bar_mean = 0.0
-        self.truncated = False
-        self.inputs_identical = True
-        times = []
-        budget = self.config.max_wall_seconds
-        started = time.monotonic()
-        try:
-            for i in range(season.bars):
-                context = self._context(i)
-                bar_started = time.perf_counter()
-                for thread in threads:
-                    thread.arm_obj.clock.set(context["timestamp"])
-                    thread.context = context
-                    thread.finished.clear()
-                    thread.go.set()
-                for thread in threads:
-                    thread.finished.wait()
-                failure = next((t.error for t in threads if t.error), None)
-                if failure:
-                    raise failure
-                per_arm = {thread.arm_obj.id: thread.result for thread in threads}
-                for arm in arms:
-                    arm.curve.append(float(per_arm[arm.id]["portfolio"]["equity"]))
-                self._publish(i, context, times, per_arm, bar_started)
-                if budget and time.monotonic() - started > budget:
-                    self.truncated = True
-                    break
-        finally:
+    def _step(self, arms, threads, i, times, bar_started=None):
+        """One bar for every arm: one shared frame, one decision per fly.
+
+        Both engines go through here, so a live session's bars are produced by exactly the
+        code that produces a recorded one.
+        """
+        context = self._context(i)
+        if threads:
+            for thread in threads:
+                thread.arm_obj.clock.set(context["timestamp"])
+                thread.context = context
+                thread.finished.clear()
+                thread.go.set()
+            for thread in threads:
+                thread.finished.wait()
+            failure = next((t.error for t in threads if t.error), None)
+            if failure:
+                raise failure
+            per_arm = {thread.arm_obj.id: thread.result for thread in threads}
+        else:
+            per_arm = {}
+            for arm in arms:
+                arm.clock.set(context["timestamp"])
+                per_arm[arm.id] = self._bar(arm, context)
+        for arm in arms:
+            arm.curve.append(float(per_arm[arm.id]["portfolio"]["equity"]))
+        self._publish(i, context, times, per_arm, bar_started)
+        return per_arm
+
+    def _close_arms(self, arms, threads):
+        """Stop the arms. A ledger closes on the thread that opened it.
+
+        Upstream's `Ledger` binds its SQLite connection to its creating thread, so a threaded
+        arm closes its own inside `_ArmThread.run`, while a sequential arm closes here.
+        """
+        if threads:
             for thread in threads:
                 thread.stop.set()
                 thread.go.set()
             for thread in threads:
                 thread.join(timeout=120)
+            return
+        for arm in arms:
+            arm.close()
+
+    def _begin_bar_loop(self):
+        self.observations = []
+        self.seconds_per_bar_mean = 0.0
+        self.truncated = False
+        self.inputs_identical = True
+
+    def _finish_bar_loop(self, times):
         self.seconds_per_bar_mean = round(sum(times) / len(times), 4) if times else 0.0
+
+    def _run_parallel(self, run_id, season, out):
+        """One thread per arm. Both arms receive the same frame object every bar."""
+        arms, threads = self._open_arms(out)
+        self._begin_bar_loop()
+        times = []
+        budget = self.config.max_wall_seconds
+        started = time.monotonic()
+        try:
+            for i in range(season.bars):
+                self._step(arms, threads, i, times, time.perf_counter())
+                if budget and time.monotonic() - started > budget:
+                    self.truncated = True
+                    break
+        finally:
+            self._close_arms(arms, threads)
+        self._finish_bar_loop(times)
         return arms
+
+    def run_live(self, feed, run_id=None, out_root=None, stop=None) -> dict:
+        """Trade a growing season on the wall clock: one decision per completed bar.
+
+        The exchange's clock decides when a bar exists — the loop waits for the feed to close
+        one and then trades it. A machine slower than the bar interval falls behind, and the
+        lag is recorded, but nothing is skipped, reordered, or traded on a forming bar, which
+        is what keeps a live session comparable with a recorded one.
+
+        ``stop`` is polled between bars, so Ctrl-C or a stop file ends the session between two
+        decisions rather than in the middle of one.
+        """
+        config = self.config
+        started = time.time()
+        run_id = run_id or time.strftime("%Y%m%d-%H%M%S", time.localtime(started))
+        out = Path(out_root or config.out) / run_id
+        out.mkdir(parents=True, exist_ok=True)
+        self.out_dir = out
+        if config.must_not_overlap:
+            raise ValueError(
+                "a live session cannot be an exam: it has no fixed window to be checked "
+                "against. Drop --must-not-overlap."
+            )
+        if self.rules.reinforcement in ("decoy", "shuffled"):
+            raise ValueError(
+                f"reinforcement={self.rules.reinforcement!r} needs the whole season before the "
+                "first bar — a benchmark curve, or a permutation of a finished recording — "
+                "which a live session does not have yet. Use 'pnl' or 'none'."
+            )
+
+        season = self.season = feed.prime()
+        # Read once, at the start: `next_bar_opened` is a property of the growing window, so
+        # reading it later would report the last bar's successor as the session's start.
+        session_opened = season.next_bar_opened
+        stop = stop or (lambda: False)
+        self.emit(
+            "season_ready",
+            describe=season.describe(),
+            provenance=season.provenance,
+            bars=[],
+            live=True,
+            warmup=season.warmup_bars,
+            next_bar_opened=session_opened,
+        )
+
+        on_settings = arm_settings(self.rules, self.personas[0]["learning"])
+        off_settings = arm_settings(self.rules, self.personas[1]["learning"])
+        conditions = starting_conditions(
+            self.rules, config.kind, config.starting, on_settings, off_settings
+        )
+        if config.kind == "competition":
+            assert_only_learning_differs(
+                arm_settings(self.rules, True), arm_settings(self.rules, False)
+            )
+
+        arms, threads = self._open_arms(out)
+        self._begin_bar_loop()
+        times = []
+        processed = 0
+        lag = 0.0
+        try:
+            while not stop():
+                if not feed.poll():
+                    self._idle(feed.poll_seconds, stop)
+                    continue
+                # Every bar the exchange closed while the previous one was being decided is
+                # still traded, in market order. Dropping the backlog would quietly turn a
+                # slow machine into a different strategy.
+                while processed < season.bars and not stop():
+                    bar_started = time.perf_counter()
+                    self._step(arms, threads, processed, times, bar_started)
+                    processed += 1
+                    # Lag is measured on the clock the session itself polls with, so it means
+                    # "how far behind the exchange is this decision" rather than "how far from
+                    # this process's wall clock".
+                    lag = round(
+                        feed.clock() - (season.timestamp(processed - 1) + config.market.bar_seconds),
+                        3,
+                    )
+                    self.emit(
+                        "live_progress",
+                        bars=processed,
+                        available=season.bars,
+                        lag_seconds=lag,
+                        polls=feed.polls,
+                    )
+        finally:
+            self._close_arms(arms, threads)
+        self._finish_bar_loop(times)
+        return self._finalise(
+            run_id=run_id,
+            season=season,
+            arms=arms,
+            started=started,
+            repeat=0,
+            overlap=None,
+            conditions=conditions,
+            out=out,
+            wall_mode=(
+                "live: one decision per completed market bar, paced by the exchange's clock. "
+                "Bars that closed while a decision was still running are traded in market "
+                "order, so the session can run behind wall time but never ahead of it."
+            ),
+            extra={
+                "live": {
+                    "product": season.spec.product,
+                    "bar_seconds": season.spec.bar_seconds,
+                    "warmup_bars": season.warmup_bars,
+                    "session_opened": session_opened,
+                    "bars_traded": len(self.observations),
+                    "lag_seconds_at_end": lag,
+                    "polls": feed.polls,
+                }
+            },
+        )
+
+    def _idle(self, seconds, stop):
+        """Wait between polls, in small slices, so a stop is honoured promptly."""
+        deadline = time.monotonic() + max(0.0, float(seconds))
+        while not stop() and time.monotonic() < deadline:
+            time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
 
     # -- per-bar plumbing ------------------------------------------------------------
 

@@ -86,10 +86,12 @@ class LiveSeason:
         expressed as a spec with the tradable count filled in. Everything else — the quote
         arithmetic, the 120-bar history slice, the timestamp accessor — stays exactly the
         arithmetic a recorded season uses, which is what keeps live and replay comparable.
+
+        ``bars`` may be 0, which is the state a session starts in: the warm-up is the chart,
+        and no bar is tradable until the exchange closes one.
         """
-        tradable = max(1, self.bars)
         self._view = Season(
-            dataclasses.replace(self.spec, bars=tradable), self.closes, self.times, self.provenance
+            dataclasses.replace(self.spec, bars=self.bars), self.closes, self.times, self.provenance
         )
 
     @property
@@ -100,10 +102,30 @@ class LiveSeason:
     def seed_bars(self) -> int:
         return self.warmup_bars
 
+    @property
+    def next_bar_opened(self) -> int:
+        """When the next tradable bar opens.
+
+        This is the market clock a live session starts its accounts on: before the first
+        close there is no bar 0 to read a timestamp from, but the next one is not a guess.
+        """
+        return self.times[-1] + int(self.spec.bar_seconds)
+
     def advance(self, bars) -> int:
-        """Append completed bars this season has not seen. Returns how many were added."""
+        """Append completed bars this season has not seen. Returns how many were added.
+
+        Only bars that opened at or after the session's own start are eligible. A live season
+        begins from a warm-up window the exchange already had, so a response that still
+        contains older bars — it always does, the endpoint returns a page — must not push the
+        session backwards into minutes that had already closed before it opened.
+        """
+        start = self.next_bar_opened
         known = set(self.times)
-        fresh = [(int(t), float(close)) for t, close in sorted(bars) if int(t) not in known]
+        fresh = [
+            (int(t), float(close))
+            for t, close in sorted(bars)
+            if int(t) >= start and int(t) not in known
+        ]
         for opened, close in fresh:
             self.times.append(opened)
             self.closes.append(close)
@@ -112,7 +134,7 @@ class LiveSeason:
         return len(fresh)
 
     def describe(self) -> str:
-        return f"{self._view.describe()} · live, {self.bars} completed bars"
+        return f"{self.spec.describe()} · live, {self.bars} completed bars"
 
     def mid(self, i: int) -> float:
         return self._view.mid(i)
@@ -191,18 +213,3 @@ class CandleFeed:
         self.last_poll = now
         self.polls += 1
         return self.season.advance(completed(self.fetch(), self.spec.bar_seconds, now))
-
-    def wait_for_bar(self, timeout: float | None = None) -> int:
-        """Poll until a new bar lands, then return it. Returns 0 if ``timeout`` expires.
-
-        A late exchange minute is not an error: the season keeps its own timestamps, so a
-        gap stays a gap rather than being smoothed into a bar that never traded.
-        """
-        deadline = None if timeout is None else self.clock() + timeout
-        while True:
-            added = self.poll()
-            if added:
-                return added
-            if deadline is not None and self.clock() >= deadline:
-                return 0
-            time.sleep(min(self.poll_seconds, 1.0))
