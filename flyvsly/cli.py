@@ -342,6 +342,86 @@ def cmd_serve(args):
     )
 
 
+def cmd_live(args):
+    """Trade the live market on paper, one decision per completed bar, until stopped.
+
+    The session is a real one: the bars come from the public Coinbase candle endpoint as the
+    exchange closes them, and both flies decide on them with the same rules a recorded season
+    uses. Nothing here can place an order — there is no key, no account and no order path.
+    """
+    import threading
+
+    from .server import RunHub, http_server, load_manifests
+
+    runs = Path(args.runs)
+    hub = RunHub(runs, args.data)
+    options = {
+        "engine": args.engine,
+        "product": args.product,
+        "bar_seconds": args.bar_seconds,
+        "bars": args.bars,
+        "warmup": args.warmup,
+        "poll_seconds": args.poll,
+        "capital": args.capital,
+        "order_limit": args.order_limit,
+        "daily_orders": args.daily_orders,
+        "require_gate": not args.gate_off,
+        "reinforcement": args.reinforcement,
+        "neural_ms": args.neural_ms,
+        "label": args.label or f"live {args.product} {args.bar_seconds}s",
+    }
+
+    httpd = None
+    if args.serve:
+        httpd = http_server(hub, args.port, Path(args.web))
+        threading.Thread(target=httpd.serve_forever, daemon=True, name="http").start()
+        print(
+            f"watching live at http://127.0.0.1:{args.port}/  "
+            f"(recordings: {len(load_manifests(runs))})\n"
+            f"stop with Ctrl-C, POST /api/run/stop, or the stop file",
+            flush=True,
+        )
+    else:
+        print(
+            f"live session: {options['label']} · engine={args.engine} · "
+            f"one decision per {args.bar_seconds}s bar · paper only\n"
+            f"stop with Ctrl-C or the stop file",
+            flush=True,
+        )
+
+    def stop_file_seen():
+        return bool(args.stop_file) and Path(args.stop_file).exists()
+
+    hub.start_live(options)
+    try:
+        while hub.thread and hub.thread.is_alive():
+            if stop_file_seen():
+                print("\nstop file seen: finishing this bar and writing the recording", flush=True)
+                hub.stop_live()
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        print("\nstopping after this bar…", flush=True)
+        hub.stop_live()
+        hub.thread.join(timeout=600)
+    finally:
+        if httpd is not None:
+            httpd.shutdown()
+            httpd.server_close()
+
+    state = hub.state
+    if state.get("status") == "failed":
+        print(f"live session failed: {state.get('error')}", flush=True)
+        return 1
+    summary = state.get("summary") or {}
+    comparison = summary.get("comparison") or {}
+    print(
+        f"live session finished: {summary.get('bars', 0)} bars traded · "
+        f"{state.get('run_id')} · leader {comparison.get('leader', 'n/a')}",
+        flush=True,
+    )
+    return 0
+
+
 def cmd_publish(args):
     """Copy recordings next to the web bundle so a static host has real data to show."""
     import shutil
@@ -692,6 +772,49 @@ def main(argv=None):
     serve.add_argument("--data", default="data")
     serve.add_argument("--no-open", action="store_true")
     serve.set_defaults(func=cmd_serve)
+
+    live = sub.add_parser(
+        "live", help="trade the live market on paper, one decision per completed bar"
+    )
+    live.add_argument("--engine", choices=["neural", "procedural"], default="neural")
+    live.add_argument("--product", default="BTC-USDC")
+    live.add_argument("--bar-seconds", type=int, default=60, help="bar length, and the cadence")
+    live.add_argument(
+        "--bars",
+        type=int,
+        default=48,
+        help="season length the rules were validated against; a live session grows past it",
+    )
+    live.add_argument(
+        "--warmup",
+        type=int,
+        default=120,
+        help="completed bars the fly's first chart shows before the session starts trading",
+    )
+    live.add_argument("--poll", type=float, default=15.0, help="seconds between candle polls")
+    live.add_argument("--capital", default="100")
+    live.add_argument("--order-limit", default="10")
+    live.add_argument("--daily-orders", type=int, default=24)
+    live.add_argument("--neural-ms", type=float, default=500)
+    live.add_argument(
+        "--reinforcement",
+        choices=["pnl", "none"],
+        default="pnl",
+        help="decoy/shuffled need a whole season up front, which a live session does not have",
+    )
+    live.add_argument("--gate-off", action="store_true", help="drop DNpe017's spike gate")
+    live.add_argument("--label")
+    live.add_argument("--runs", default="runs")
+    live.add_argument("--data", default="data")
+    live.add_argument(
+        "--stop-file",
+        default=None,
+        help="stop when this file appears (checked between bars)",
+    )
+    live.add_argument("--serve", action="store_true", help="also serve the web experience")
+    live.add_argument("--port", type=int, default=7777)
+    live.add_argument("--web", default="web/dist")
+    live.set_defaults(func=cmd_live)
 
     fitreadout = sub.add_parser(
         "fitreadout", help="fit a readout model from recorded population vectors"

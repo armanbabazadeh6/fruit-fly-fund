@@ -197,6 +197,116 @@ class RunHub:
             }
             self.broadcast("run_failed", self.state)
 
+    def start_live(self, options: dict) -> dict:
+        """Trade the live market in the background, streaming to every listener.
+
+        The session ends when `stop_live()` is called, on Ctrl-C, or when the stop file
+        appears — never in the middle of a bar.
+        """
+        with self.lock:
+            if self.thread and self.thread.is_alive():
+                return {"started": False, "reason": "A run is already in progress."}
+            self.state = {"status": "starting", "options": options, "live": True}
+            self.thread = threading.Thread(
+                target=self._live_worker, args=(options,), daemon=True, name="live-session"
+            )
+            self.thread.start()
+        return {"started": True, "options": options}
+
+    def stop_live(self) -> dict:
+        """Ask a live session to stop after the bar it is deciding."""
+        with self.lock:
+            if not (self.thread and self.thread.is_alive()):
+                return {"stopped": False, "reason": "No live session is running."}
+            self.state = {**self.state, "status": "stopping"}
+        return {"stopped": True}
+
+    def _live_worker(self, options: dict):
+        try:
+            from .arena import Arena
+            from .live import CandleFeed
+
+            rules = ArenaRules(
+                capital=options.get("capital", "100"),
+                order_limit=options.get("order_limit", "10"),
+                daily_orders=int(options.get("daily_orders", 24)),
+                require_gate=bool(options.get("require_gate", True)),
+                reinforcement=str(options.get("reinforcement", "pnl")),
+                neural_ms=float(options.get("neural_ms", 500)),
+                decoder_threshold_hz=float(options.get("decoder_threshold_hz", 2)),
+            ).validate()
+            spec = MarketSpec(
+                kind="coinbase",
+                product=str(options.get("product", "BTC-USDC")),
+                bars=int(options.get("bars", 48)),
+                bar_seconds=int(options.get("bar_seconds", 60)),
+            )
+            label = options.get("label") or "live session"
+            config = ArenaConfig(
+                rules=rules, market=spec, engine=options.get("engine", "neural"),
+                label=label, out=self.runs,
+            )
+            warmup = int(options.get("warmup", 120))
+            feed = CandleFeed(
+                spec,
+                warmup_bars=warmup,
+                poll_seconds=float(options.get("poll_seconds", 15)),
+            )
+            arena = Arena(config, on_event=self._event, data_root=self.data)
+            run_id = time.strftime("%Y%m%d-%H%M%S") + "-live"
+            self.state = {"status": "running", "run_id": run_id, "live": True}
+            self.broadcast(
+                "run_starting",
+                {
+                    "run_id": run_id,
+                    "repeat": 0,
+                    "repeats": 1,
+                    "label": label,
+                    "engine": config.engine,
+                    "season": spec.describe(),
+                    # A live session has no length to announce: it grows one bar at a time.
+                    "bars": None,
+                    "bar_seconds": spec.bar_seconds,
+                    "warmup": warmup,
+                    "product": spec.product,
+                    "market_kind": spec.kind,
+                    "live": True,
+                    "options": {
+                        "capital": str(rules.capital),
+                        "order_limit": str(rules.order_limit),
+                        "paper_fee": str(rules.paper_fee),
+                        "slippage": str(rules.slippage),
+                        "spread_limit": str(rules.spread_limit),
+                        "daily_orders": rules.daily_orders,
+                        "interval_seconds": rules.interval_seconds,
+                        "decoder_threshold_hz": rules.decoder_threshold_hz,
+                        "neural_ms": rules.neural_ms,
+                    },
+                },
+            )
+            recording = arena.run_live(
+                feed,
+                run_id=run_id,
+                out_root=self.runs,
+                stop=lambda: self.state.get("status") == "stopping",
+            )
+            self.clear_session()
+            self.state = {
+                "status": "finished",
+                "run_id": run_id,
+                "live": True,
+                "summary": recording["summary"],
+            }
+            self.broadcast("batch_finished", {"label": label})
+        except Exception as error:
+            self.clear_session()
+            self.state = {
+                "status": "failed",
+                "error": f"{type(error).__name__}: {error}",
+                "trace": traceback.format_exc()[-2000:],
+            }
+            self.broadcast("run_failed", self.state)
+
     def _event(self, kind, payload):
         self.broadcast(kind, payload)
 
@@ -284,6 +394,14 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as error:
                 return self._error(400, f"Invalid JSON body: {error}")
             return self._json(self.hub.start_run(options))
+        if path == "/api/runs/live":
+            try:
+                options = self._body()
+            except ValueError as error:
+                return self._error(400, f"Invalid JSON body: {error}")
+            return self._json(self.hub.start_live(options))
+        if path == "/api/run/stop":
+            return self._json(self.hub.stop_live())
         return self._error(404, "Unknown endpoint")
 
     # -- implementations -------------------------------------------------------------
@@ -398,10 +516,15 @@ npm run build</pre>
 """
 
 
+def http_server(hub, port, web):
+    """The HTTP server a hub is served by. The caller decides whether to block on it."""
+    handler = type("BoundHandler", (Handler,), {"hub": hub, "web": Path(web)})
+    return ThreadingHTTPServer(("127.0.0.1", port), handler)
+
+
 def serve(port=7777, runs=Path("runs"), web=Path("web/dist"), data="data", open_browser=True):
     hub = RunHub(Path(runs), data)
-    handler = type("BoundHandler", (Handler,), {"hub": hub, "web": Path(web)})
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    httpd = http_server(hub, port, web)
     url = f"http://127.0.0.1:{port}/"
     print(f"Fly vs. Fly serving {url}  (recordings: {len(load_manifests(runs))})", flush=True)
     if open_browser:
