@@ -26,6 +26,8 @@ import hashlib
 import json
 import math
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -313,3 +315,69 @@ def test_a_neural_replay_repeats_the_inputs_but_not_the_brain(tmp_path):
         f"neural replay of {len(logged)} bars: {agree}/2 arms matched the log's decisions "
         "exactly; a replay from baseline is expected to diverge once learned weights matter"
     )
+
+
+def usable_bash():
+    """A bash that can run the campaign script, or None. Same probe as the supervisor's test."""
+    candidates = [
+        os.environ.get("FLYVSLY_BASH"),
+        shutil.which("bash"),
+        r"C:\Program Files\Git\bin\bash.exe",
+        "/bin/bash",
+        "/usr/bin/bash",
+        shutil.which("sh"),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            probe = subprocess.run(
+                [candidate, "-c", "a=(ok); printf %s ${a[0]}"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except OSError:
+            continue
+        if probe.returncode == 0 and probe.stdout.strip() == "ok":
+            return candidate
+    return None
+
+
+def test_the_campaign_script_prints_its_plan_without_starting_anything(tmp_path):
+    """`--dry-run` is the honest offline check for a script that needs a live venue to run."""
+    bash = usable_bash()
+    if bash is None:
+        pytest.skip("no usable bash on this machine to run scripts/live-campaign.sh")
+    root = Path(__file__).resolve().parents[1]
+    runs = tmp_path / "runs"
+    proc = subprocess.run(
+        [bash, "scripts/live-campaign.sh", "--dry-run", "2", "3"],
+        cwd=root,
+        env={**os.environ, "RUNS": str(runs), "OUT": str(tmp_path / "out.md")},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "dry run: nothing started" in proc.stdout
+    # One supervisor command per session, and the pooled report at the end.
+    assert proc.stdout.count("would run:") == 2
+    assert "live-report" in proc.stdout
+    assert not runs.exists()
+
+
+def test_the_campaign_script_refuses_a_size_that_is_not_a_number(tmp_path):
+    bash = usable_bash()
+    if bash is None:
+        pytest.skip("no usable bash on this machine to run scripts/live-campaign.sh")
+    root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(
+        [bash, "scripts/live-campaign.sh", "many", "3"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 2
+    assert "sessions must be a positive integer" in proc.stderr
