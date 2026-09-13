@@ -83,6 +83,8 @@ export interface StreamHandlers {
   onSeason?: (payload: Record<string, unknown>) => void
   onArms?: (payload: Record<string, unknown>) => void
   onBar?: (payload: Record<string, unknown>) => void
+  /** The live session's own report of how far behind the exchange it is running. */
+  onLiveProgress?: (payload: Record<string, unknown>) => void
   onFinished?: (payload: Record<string, unknown>) => void
   onFailed?: (payload: Record<string, unknown>) => void
   onStatus?: (connected: boolean) => void
@@ -105,6 +107,7 @@ export function openStream(handlers: StreamHandlers): () => void {
   bind('season_ready', handlers.onSeason)
   bind('arms_ready', handlers.onArms)
   bind('bar', handlers.onBar)
+  bind('live_progress', handlers.onLiveProgress)
   bind('recording', handlers.onFinished)
   bind('batch_finished', handlers.onFinished)
   bind('run_failed', handlers.onFailed)

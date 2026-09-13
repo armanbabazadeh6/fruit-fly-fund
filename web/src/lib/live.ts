@@ -14,6 +14,7 @@ import type {
   Benchmark,
   Observation,
   Recording,
+  Trade,
 } from './types'
 
 const BASE_INCREMENT = 1e-8
@@ -33,6 +34,37 @@ export function buyAndHold(bars: { bid: string; ask: string }[], capital: number
   return bars.map((bar) => cash + size * Number(bar.bid))
 }
 
+/**
+ * The fills one arm has booked so far, rebuilt from the same observation fields the recorder
+ * writes into a finished recording's trade list. `equity_after` is the ledger's own marked
+ * equity for that bar and `reason` is the last explanation step the decision itself recorded:
+ * both are carried across, not recomputed, so a streaming table and the finished one agree.
+ */
+function bookedTrades(observations: Observation[], armId: string): Trade[] {
+  const trades: Trade[] = []
+  for (const observation of observations) {
+    const entry = observation.arms?.[armId]
+    const plan = entry?.execution.plan
+    const fill = entry?.execution.fill
+    if (!entry || entry.execution.status !== 'FILLED' || !plan || !fill) continue
+    const steps = entry.decision?.explanation?.steps ?? []
+    trades.push({
+      i: observation.i,
+      t: observation.t,
+      side: plan.side,
+      product: plan.product,
+      base_size: fill.base,
+      price: fill.price,
+      quote_size: fill.quote,
+      fee: fill.fee,
+      reason: steps[steps.length - 1] ?? '',
+      equity_after: entry.portfolio.equity,
+      memory_changed_edges: entry.signal?.memory?.changed_edges ?? null,
+    })
+  }
+  return trades
+}
+
 export function summarise(arms: ArmMeta[], observations: Observation[]): Record<string, ArmSummary> {
   const out: Record<string, ArmSummary> = {}
   for (const arm of arms) {
@@ -49,6 +81,9 @@ export function summarise(arms: ArmMeta[], observations: Observation[]): Record<
       if (peak > 0) drawdown = Math.max(drawdown, (peak - value) / peak)
     }
     const last = points[points.length - 1]
+    const exposure = points.filter((entry) =>
+      Object.values(entry.portfolio.positions).some((size) => Number(size) > 0),
+    ).length
     out[arm.id] = {
       name: arm.name,
       final_equity: curve[curve.length - 1] ?? initial,
@@ -61,14 +96,12 @@ export function summarise(arms: ArmMeta[], observations: Observation[]): Record<
       blocked_bars: points.filter((entry) => entry.execution.status === 'BLOCKED').length,
       fees_paid: last?.portfolio.fees_paid ?? '0',
       halted: last?.portfolio.halted ?? null,
-      exposure_bars: points.filter(
-        (entry) => Object.values(entry.portfolio.positions).some((size) => Number(size) > 0),
-      ).length,
-      trades: [],
+      exposure_bars: exposure,
+      trades: bookedTrades(observations, arm.id),
       deployment: {
         bars: observations.length,
-        bars_holding: 0,
-        holding_fraction: 0,
+        bars_holding: exposure,
+        holding_fraction: observations.length ? exposure / observations.length : 0,
         order_limit_usdc: '10',
         daily_order_limit: 24,
         cooldown_seconds: 60,
@@ -104,23 +137,76 @@ export function benchmarks(
   }
 }
 
+/** The newest `live_progress` report: what the exchange has closed, and how far behind it ran. */
+export interface LiveProgress {
+  /** Bars the exchange has already closed that the growing season can see. */
+  available: number
+  /** Seconds the newest decision ran behind the close it was deciding. */
+  lagSeconds: number
+}
+
 export interface LiveRun {
   runId: string
   engine: 'neural' | 'procedural'
   label: string
   seasonDescribe: string
   seasonProvenance: Record<string, unknown>
+  /** Bars the season announced up front. Empty for a live session, which has none yet. */
   seasonBars: { t: number; mid: number; bid: string; ask: string }[]
   arms: ArmMeta[]
   observations: Observation[]
-  /** Wall seconds each completed bar took, for the progress estimate. */
-  barSeconds: number[]
-  bars: number
+  /** Wall seconds each decided bar took, for the progress estimate. */
+  barDurations: number[]
+  /** When the session started, epoch seconds; 0 when unknown. */
+  startedWall: number
+  /** Session wall seconds at the newest bar, so a live view can state its own age. */
+  elapsedSeconds: number
+  /** The market interval between bars, as the hub announced it. */
+  barSeconds: number
+  /** Bars the hub announced for the whole run; 0 when it announced none, as live does. */
+  announcedBars: number
+  progress: LiveProgress | null
   repeat: number
   repeats: number
   finished: boolean
   rules: Record<string, string | number>
   summary?: Recording['summary']
+}
+
+/**
+ * The price path the session has actually traded.
+ *
+ * A fixed season arrives with its bars and those are used exactly as recorded. A live season
+ * does not: the hub announces `bars: []` and grows one bar at a time, so the series is
+ * rebuilt from the quote each observation recorded — the same bid, ask and mid the flies
+ * were shown, in the order the exchange closed them. Nothing is interpolated or forecast,
+ * and the path only ever gains a point at its end.
+ */
+export function marketBars(live: LiveRun): LiveRun['seasonBars'] {
+  if (live.seasonBars.length) return live.seasonBars
+  return live.observations.map((observation) => ({
+    t: observation.t,
+    mid: Number(observation.market.mid),
+    bid: observation.market.bid,
+    ask: observation.market.ask,
+  }))
+}
+
+/**
+ * The hub's season description with its completed-bar count brought up to date.
+ *
+ * A live season is described once, when it opens, so the count inside that string is the one
+ * at that moment — "live, 0 completed bars" — and would go stale as the session trades.
+ * `live_progress` reports the same measurement (bars the exchange has closed), so the string
+ * is restated rather than left contradicting the panels beside it. A session that has not
+ * reported yet, and every fixed season, is returned untouched.
+ */
+export function seasonDescription(live: LiveRun): string {
+  if (!live.progress) return live.seasonDescribe
+  return live.seasonDescribe.replace(
+    / · live, \d+ completed bars$/,
+    ` · live, ${live.progress.available} completed bars`,
+  )
 }
 
 /** A live run dressed as a recording so every panel takes one input type. */
@@ -129,9 +215,18 @@ export function asRecording(live: LiveRun): Recording {
   const rules = live.rules
   const capital = arms[0] ? Number(arms[0].starting_capital) : 100
   const fee = Number(rules.paper_fee ?? 0.006)
+  // The run's length is the bars that exist right now: a live season announced none, and a
+  // later bar only ever appends. Everything drawn from it therefore grows rather than resets.
+  const bars = Math.max(live.announcedBars, live.observations.length, 1)
+  const seasonBars = marketBars(live)
   const summaries =
     live.summary?.arms ?? summarise(arms, live.observations)
-  const benchmark = live.summary?.benchmarks ?? benchmarks(live.seasonBars, capital, fee)
+  const benchmark = live.summary?.benchmarks ?? benchmarks(seasonBars, capital, fee)
+  // Both are measured, not assumed: the session's own wall time and the mean decision time
+  // the hub reported bar by bar. A live session that has not decided anything yet reports 0.
+  const secondsPerBar = live.barDurations.length
+    ? live.barDurations.reduce((sum, value) => sum + value, 0) / live.barDurations.length
+    : 0
   const on = summaries[arms[0]?.id ?? 'gordon']
   const off = summaries[arms[1]?.id ?? 'warren']
   const delta = (on?.final_equity ?? capital) - (off?.final_equity ?? capital)
@@ -139,13 +234,13 @@ export function asRecording(live: LiveRun): Recording {
     schema: 'flyvsly.recording/v1',
     run: {
       id: live.runId,
-      created: live.seasonBars[0]?.t ?? 0,
+      created: seasonBars[0]?.t ?? 0,
       label: live.label,
       engine: live.engine,
       repeat: live.repeat,
-      bars: Math.max(live.bars, 1),
-      bar_seconds: 60,
-      season: live.seasonDescribe,
+      bars,
+      bar_seconds: live.barSeconds,
+      season: seasonDescription(live),
       rules,
       starting_conditions: {
         fairness: {
@@ -155,8 +250,8 @@ export function asRecording(live: LiveRun): Recording {
         },
       },
       hardware: {},
-      duration_seconds: 0,
-      seconds_per_bar_mean: 0,
+      duration_seconds: live.elapsedSeconds,
+      seconds_per_bar_mean: secondsPerBar,
       truncated: false,
       wall_mode: 'live stream, one completed bar per observation',
       inputs_identical_every_bar: live.observations.every(
@@ -165,16 +260,16 @@ export function asRecording(live: LiveRun): Recording {
     },
     arms,
     season: {
-      describe: live.seasonDescribe,
+      describe: seasonDescription(live),
       provenance: live.seasonProvenance,
-      bars: live.seasonBars,
+      bars: seasonBars,
     },
     observations: live.observations,
     summary: {
-      bars: Math.max(live.bars, 1),
+      bars,
       initial_capital: String(capital),
-      duration_seconds: 0,
-      seconds_per_bar_mean: 0,
+      duration_seconds: live.elapsedSeconds,
+      seconds_per_bar_mean: secondsPerBar,
       truncated: false,
       arms: summaries,
       benchmarks: benchmark,

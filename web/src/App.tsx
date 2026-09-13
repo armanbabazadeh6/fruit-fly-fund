@@ -22,7 +22,7 @@ import {
   startRun,
   type Catalog,
 } from './lib/data'
-import { asRecording, type LiveRun } from './lib/live'
+import { asRecording, seasonDescription, type LiveRun } from './lib/live'
 import type { Observation, Recording, ReportGroup, Source } from './lib/types'
 import './App.css'
 
@@ -56,6 +56,35 @@ function sourceFor(recording: Recording, mode: 'recorded' | 'demo'): Source {
   }
 }
 
+/**
+ * The header badge for a run in flight.
+ *
+ * Derived from the live state on every render rather than written once per stream event: a
+ * live season grows, so a bar count stored when a bar arrived is stale the moment the next
+ * one does. `starting` covers the window before the first bar, when the previous recording
+ * is still the thing on screen and the detail says so.
+ */
+function liveSourceFor(live: LiveRun, starting: boolean): Source {
+  const neural = live.engine === 'neural'
+  const kind = neural ? 'live neural run' : 'live procedural demo'
+  const traded = live.observations.length
+  const label = starting
+    ? `${kind} — starting`
+    : live.finished
+      ? `${kind} — finished, loading its recording`
+      : neural
+        ? `${kind} — streaming`
+        : `${kind} — not neural`
+  const detail = starting
+    ? neural
+      ? 'building two MaleCNS v1.0 brains, ~10 s before the first bar · the previous recording stays on screen until then'
+      : 'starting the procedural engine · the previous recording stays on screen until then'
+    : live.announcedBars > 0
+      ? `${seasonDescription(live)} · bar ${traded}/${live.announcedBars}`
+      : `${seasonDescription(live)} · ${traded} ${traded === 1 ? 'bar' : 'bars'} traded, no fixed length`
+  return { mode: 'live', label, detail, neural }
+}
+
 export default function App() {
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [recording, setRecording] = useState<Recording | null>(null)
@@ -76,6 +105,18 @@ export default function App() {
   const [report, setReport] = useState<ReportGroup[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const liveRef = useRef<LiveRun | null>(null)
+
+  // True while a stream is in flight. The finished run is handed to its recording, so this
+  // goes false by itself as soon as that lands.
+  const liveActive = Boolean(live && !live.finished)
+  // A live view sits on the newest bar unless the reader has stepped back into the season.
+  // The ref is what the stream handler reads: it is created once and must not go stale.
+  const [following, setFollowing] = useState(true)
+  const followingRef = useRef(true)
+  const follow = useCallback((value: boolean) => {
+    followingRef.current = value
+    setFollowing(value)
+  }, [])
 
   const pick = useCallback(async (id: string, mode: Catalog['mode']) => {
     try {
@@ -148,8 +189,16 @@ export default function App() {
           seasonBars: [],
           arms: [],
           observations: [],
-          barSeconds: [],
-          bars: Number(payload.bars ?? 0),
+          barDurations: [],
+          // The session's own age is measured from here, and used only to report how long the
+          // stream has been running; the exchange's clock decides the bars.
+          startedWall: Date.now() / 1000,
+          elapsedSeconds: 0,
+          barSeconds: Number(payload.bar_seconds ?? 60),
+          // A live hub announces no length: it grows one bar at a time. A run started for a
+          // fixed number of bars announces that number, and the header can show progress.
+          announcedBars: Number(payload.bars ?? 0) || 0,
+          progress: null,
           repeat: Number(payload.repeat ?? 0),
           repeats: Number(payload.repeats ?? 1),
           finished: false,
@@ -157,32 +206,23 @@ export default function App() {
         }
         liveRef.current = next
         setLive(next)
-        // The previous recording stays on screen until the new run's arms and season
-        // arrive: a live view with no arms yet has nothing truthful to render.
+        follow(true)
+        // The previous recording stays on screen until the new run's arms arrive: a live view
+        // with no arms yet has nothing truthful to render, and the badge says so.
         setStarting(true)
         setIndex(0)
-        setSource({
-          mode: 'live',
-          label:
-            next.engine === 'neural'
-              ? 'live neural run — starting'
-              : 'live procedural demo — starting',
-          detail:
-            next.engine === 'neural'
-              ? 'building two MaleCNS v1.0 brains, ~10 s before the first bar'
-              : 'starting the procedural engine',
-          neural: next.engine === 'neural',
-        })
       },
       onSeason: (payload) => {
         const current = liveRef.current
         if (!current) return
+        // A fixed season announces its whole bar list here; a live one announces an empty
+        // list and the path is grown from the bars as they close (see `marketBars`).
+        const announced = (payload.bars as LiveRun['seasonBars'] | null) ?? []
         const next: LiveRun = {
           ...current,
           seasonDescribe: String(payload.describe ?? current.seasonDescribe),
           seasonProvenance: (payload.provenance as Record<string, unknown>) ?? {},
-          seasonBars: (payload.bars as LiveRun['seasonBars']) ?? [],
-          bars: ((payload.bars as unknown[]) ?? []).length || current.bars,
+          seasonBars: announced.length ? announced : current.seasonBars,
         }
         liveRef.current = next
         setLive(next)
@@ -208,24 +248,35 @@ export default function App() {
           arms: (payload.arms as Observation['arms']) ?? {},
         }
         if (current.observations.some((entry) => entry.i === observation.i)) return
+        const elapsed = Number(payload.elapsed ?? 0)
         const observations = [...current.observations, observation]
         const next: LiveRun = {
           ...current,
-          bars: Number(payload.bars ?? current.bars),
           observations,
-          barSeconds: [...current.barSeconds, Number(payload.elapsed ?? 0)].slice(-12),
+          barDurations: [...current.barDurations, elapsed],
+          elapsedSeconds: current.startedWall
+            ? Math.max(0, Date.now() / 1000 - current.startedWall)
+            : current.elapsedSeconds,
         }
         liveRef.current = next
         setLive(next)
         setStarting(false)
-        setIndex(observations.length - 1)
-        setSource((previous) => ({
-          ...previous,
-          label: previous.neural
-            ? 'live neural run — streaming'
-            : 'live procedural demo — not neural',
-          detail: `${current.seasonDescribe} · bar ${observations.length}/${payload.bars}`,
-        }))
+        // Following the live edge is the default. A reader who stepped back into the season
+        // keeps the bar they are reading until they ask for the edge again.
+        if (followingRef.current) setIndex(observations.length - 1)
+      },
+      onLiveProgress: (payload) => {
+        const current = liveRef.current
+        if (!current) return
+        const next: LiveRun = {
+          ...current,
+          progress: {
+            available: Number(payload.available ?? 0),
+            lagSeconds: Number(payload.lag_seconds ?? 0),
+          },
+        }
+        liveRef.current = next
+        setLive(next)
       },
       onFinished: (payload) => {
         const current = liveRef.current
@@ -259,20 +310,24 @@ export default function App() {
       },
     })
     return teardown
-  }, [pick])
+  }, [pick, follow])
 
-  // A live run is only renderable once its arms and season have arrived.
-  const liveReady = Boolean(live && live.arms.length >= 2 && live.seasonBars.length > 0)
+  // A live session announces no season bars — it grows them — so the run is renderable as
+  // soon as both flies exist, and every chart is drawn to the bars that have arrived.
+  const liveReady = Boolean(live && live.arms.length >= 2)
   const shown = useMemo(
     () => (liveReady && live ? asRecording(live) : recording),
     [live, liveReady, recording],
   )
 
-  const bars = shown ? Math.max(1, shown.summary.bars || shown.observations.length) : 1
+  // The bars that exist on screen. A live season grows them one at a time, so a stream still
+  // in flight is never scrubbed into a bar that has not happened; a finished recording's
+  // observation list is exactly its season, so replay is unchanged.
+  const bars = shown ? Math.max(1, shown.observations.length || shown.summary.bars) : 1
   const clampedIndex = Math.min(index, bars - 1)
 
   useEffect(() => {
-    if (!playing || live) return
+    if (!playing || liveActive) return
     const timer = window.setInterval(
       () =>
         setIndex((current) => {
@@ -285,14 +340,29 @@ export default function App() {
       1000 / speed,
     )
     return () => window.clearInterval(timer)
-  }, [playing, speed, bars, live])
+  }, [playing, speed, bars, liveActive])
 
   const step = useCallback(
     (delta: number) => {
       setPlaying(false)
-      setIndex((current) => Math.max(0, Math.min(bars - 1, current + delta)))
+      const next = Math.max(0, Math.min(bars - 1, index + delta))
+      // Stepping onto the newest bar re-joins the live edge; stepping behind it stays there
+      // until asked otherwise, so a bar can be read while the session keeps trading.
+      if (liveActive) follow(next >= bars - 1)
+      setIndex(next)
     },
-    [bars],
+    [bars, follow, index, liveActive],
+  )
+
+  /** Any bar selection, from the transport or a chart. Never past the bars that exist. */
+  const seek = useCallback(
+    (value: number) => {
+      setPlaying(false)
+      const next = Math.max(0, Math.min(bars - 1, value))
+      if (liveActive) follow(next >= bars - 1)
+      setIndex(next)
+    },
+    [bars, follow, liveActive],
   )
 
   useEffect(() => {
@@ -300,14 +370,14 @@ export default function App() {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return
       if (event.key === 'ArrowRight') step(1)
       if (event.key === 'ArrowLeft') step(-1)
-      if (event.key === ' ') {
+      if (event.key === ' ' && !liveActive) {
         event.preventDefault()
         setPlaying((value) => !value)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [step])
+  }, [step, liveActive])
 
   if (!shown || shown.arms.length < 2) {
     return (
@@ -340,25 +410,38 @@ export default function App() {
     })),
   )
   const firstTimestamp = observations[0]?.t ?? firstBarT
+  // Only a run with an announced length can have a time left. The estimate uses the last
+  // handful of decisions, so a machine that slows down is reflected rather than averaged away.
+  const recentDurations = live?.barDurations.slice(-12) ?? []
+  const estimate =
+    live && live.announcedBars > live.observations.length && recentDurations.length > 0
+      ? ((live.announcedBars - live.observations.length) *
+          recentDurations.reduce((sum, value) => sum + value, 0)) /
+        recentDurations.length
+      : null
 
   return (
     <div className="app">
       <TopBar
         progress={
-          running && live && live.bars > 0
-            ? {
-                done: live.observations.length,
-                total: live.bars,
-                etaSeconds:
-                  live.barSeconds.length > 0
-                    ? ((live.bars - live.observations.length) *
-                        live.barSeconds.reduce((sum, value) => sum + value, 0)) /
-                      live.barSeconds.length
-                    : null,
-              }
+          running && live
+            ? live.announcedBars > 0
+              ? {
+                  done: live.observations.length,
+                  total: live.announcedBars,
+                  etaSeconds: estimate,
+                }
+              : {
+                  // A live session has no announced length. The header says how many bars it
+                  // has traded and how far behind the market clock it is, and claims no ETA.
+                  done: live.observations.length,
+                  total: null,
+                  etaSeconds: null,
+                  lagSeconds: live.progress?.lagSeconds ?? null,
+                }
             : null
         }
-        source={source}
+        source={live ? liveSourceFor(live, starting) : source}
         listings={catalog?.listings ?? []}
         activeId={recording?.run.id ?? null}
         onPick={(id) => catalog && pick(id, catalog.mode)}
@@ -393,13 +476,15 @@ export default function App() {
             index={clampedIndex}
             bars={bars}
             playing={playing}
-            live={Boolean(live)}
+            live={liveActive}
+            following={following}
+            onFollow={() => {
+              follow(true)
+              setIndex(bars - 1)
+            }}
             firstTimestamp={firstTimestamp}
             timestamp={observations[clampedIndex]?.t ?? firstBarT}
-            onSeek={(value) => {
-              setPlaying(false)
-              setIndex(value)
-            }}
+            onSeek={seek}
             onPlayToggle={() => { if (!playing && index >= bars - 1) setIndex(0); setPlaying((value) => !value) }}
             onStep={step}
             speed={speed}
@@ -411,7 +496,9 @@ export default function App() {
             <span className="chip num">
               {onArm?.backend?.neurons
                 ? `${onArm.backend.neurons.toLocaleString()} neurons · ${onArm.backend.directed_edges?.toLocaleString()} connections`
-                : 'no connectome in this mode'}
+                : shown.run.engine === 'neural'
+                  ? 'connectome size not recorded'
+                  : 'no connectome in this mode'}
             </span>
             <span className={`chip ${shown.run.inputs_identical_every_bar ? 'chip-good' : 'chip-bad'}`}>
               {shown.run.inputs_identical_every_bar
@@ -428,7 +515,7 @@ export default function App() {
           seasonBars={shown.season.bars}
           index={clampedIndex}
           engine={shown.run.engine}
-          live={Boolean(live) && !live?.finished}
+          live={liveActive}
           initialCapital={initialCapital}
           product={observations[0]?.product ?? 'BTC-USDC'}
           population={shown.run.population}
@@ -441,7 +528,7 @@ export default function App() {
           initialCapital={initialCapital}
           comparison={shown.summary.comparison}
           barIndex={clampedIndex}
-          provisional={Boolean(live && !live.finished)}
+          provisional={liveActive}
         />
 
         {/* What this run is, and what its comparison can support. */}
@@ -470,10 +557,10 @@ export default function App() {
             cash={shown.summary.benchmarks.cash.curve}
             initialCapital={Number(initialCapital)}
             selectedIndex={clampedIndex}
-            onSelect={setIndex}
+            onSelect={seek}
             arms={arms}
             visibleBars={observations.length || bars}
-            provisional={Boolean(live && !live.finished)}
+            provisional={liveActive}
             fills={fillMarkers}
           />
           <Commentary
@@ -503,7 +590,7 @@ export default function App() {
               observation={observations[clampedIndex]?.arms?.[arm.id] ?? null}
               bar={clampedIndex}
               rules={shown.run.rules}
-              fairness={shown.run.starting_conditions.fairness}
+              fairness={shown.run.starting_conditions?.fairness ?? null}
               product={observations[clampedIndex]?.product ?? 'BTC-USDC'}
             />
           ))}
@@ -519,7 +606,7 @@ export default function App() {
           arms={arms}
           summaries={summaries}
           selectedIndex={clampedIndex}
-          onSelectBar={setIndex}
+          onSelectBar={seek}
           firstBarT={firstBarT}
         />
 

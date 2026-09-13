@@ -121,7 +121,7 @@ Warren, at 7.05 s mean. 428 of the 429 bars came in under 10 s; exactly one bar 
 still half the budget. Total compute across the session was 3,026 s against 25,740 s of wall
 clock, so the loop spent ~88% of its life waiting for the exchange to close the next bar, never
 racing it. Polling confirms the loop had slack: 1,914 polls (`run.live.polls`) at the feed's
-default 15-second interval, well over one per bar. At the end the decision was 21.1 s behind the
+15-second poll ceiling, well over one per bar. At the end the decision was 21.1 s behind the
 exchange's clock (`run.live.lag_seconds_at_end`) — 35% of a bar, having absorbed the poll wait
 plus the 7 s of compute.
 

@@ -230,3 +230,19 @@
   background: linear-gradient(90deg, var(--amber), var(--cyan));
   transition: width 300ms ease;
 }
+
+/* A live session announces no length, so the track cannot fill proportionally: it breathes
+   to say "still trading" instead of claiming a position it cannot know. */
+.topbar-progress.is-live .topbar-progress-fill {
+  animation: live-sweep 2s ease-in-out infinite;
+}
+
+@keyframes live-sweep {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}

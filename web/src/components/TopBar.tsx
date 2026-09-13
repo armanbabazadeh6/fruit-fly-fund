@@ -3,8 +3,17 @@ import { duration, signedPct, usd } from '../lib/format'
 import './TopBar.css'
 
 interface TopBarProps {
-  /** Present only while a run is in flight. */
-  progress?: { done: number; total: number; etaSeconds: number | null } | null
+  /**
+   * Present only while a run is in flight. `total` is null for a live session, which the hub
+   * announces with no length: the header then reports bars traded and the market lag instead
+   * of a fraction it cannot know.
+   */
+  progress?: {
+    done: number
+    total: number | null
+    etaSeconds: number | null
+    lagSeconds?: number | null
+  } | null
   source: Source
   listings: RecordingListing[]
   activeId: string | null
@@ -120,18 +129,35 @@ export function TopBar({
       </div>
 
       {progress && (
-        <div className="topbar-progress">
+        <div className={`topbar-progress ${progress.total === null ? 'is-live' : ''}`}>
           <span className="topbar-progress-track">
             <span
               className="topbar-progress-fill"
-              style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
+              style={{
+                width:
+                  progress.total === null
+                    ? '100%'
+                    : `${progress.total ? (progress.done / progress.total) * 100 : 0}%`,
+              }}
             />
           </span>
           <span className="num">
-            bar {progress.done}/{progress.total}
-            {progress.etaSeconds !== null && progress.etaSeconds > 0
-              ? ` · ~${duration(progress.etaSeconds)} left`
-              : ''}
+            {progress.total === null ? (
+              <>
+                {progress.done} {progress.done === 1 ? 'bar' : 'bars'} traded · live, no fixed
+                length
+                {progress.lagSeconds !== null && progress.lagSeconds !== undefined
+                  ? ` · ${progress.lagSeconds.toFixed(1)}s behind the market`
+                  : ''}
+              </>
+            ) : (
+              <>
+                bar {progress.done}/{progress.total}
+                {progress.etaSeconds !== null && progress.etaSeconds > 0
+                  ? ` · ~${duration(progress.etaSeconds)} left`
+                  : ''}
+              </>
+            )}
           </span>
         </div>
       )}

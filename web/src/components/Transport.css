@@ -111,3 +111,14 @@
 .transport-live {
   margin-left: 0.25rem;
 }
+
+/* A button wearing the chip style: the transport's only control for rejoining the live edge. */
+.transport-follow {
+  font-family: inherit;
+  line-height: normal;
+  cursor: pointer;
+}
+
+.transport-follow:hover {
+  border-color: var(--amber);
+}

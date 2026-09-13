@@ -6,6 +6,9 @@ interface TransportProps {
   bars: number
   playing: boolean
   live: boolean
+  /** Live only: whether the view sits on the newest bar or a reader has stepped behind it. */
+  following?: boolean
+  onFollow?: () => void
   firstTimestamp: number
   timestamp: number
   onSeek: (index: number) => void
@@ -22,6 +25,8 @@ export function Transport({
   bars,
   playing,
   live,
+  following = true,
+  onFollow,
   firstTimestamp,
   timestamp,
   onSeek,
@@ -91,7 +96,20 @@ export function Transport({
         ))}
       </div>
 
-      {live && <span className="chip chip-good transport-live">following the live run</span>}
+      {live &&
+        (following ? (
+          <span className="chip chip-good transport-live">following the live run</span>
+        ) : (
+          // The season keeps growing while a reader inspects an older bar, so the way back
+          // to the newest one is a control rather than an assumption.
+          <button
+            type="button"
+            className="chip chip-warn transport-live transport-follow"
+            onClick={onFollow}
+          >
+            behind · jump to the newest bar
+          </button>
+        ))}
     </div>
   )
 }

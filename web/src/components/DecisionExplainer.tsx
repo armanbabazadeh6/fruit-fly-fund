@@ -18,11 +18,12 @@ interface DecisionExplainerProps {
   observation: ArmObservation | null
   bar: number
   rules: Record<string, string | number>
-  fairness: {
+  /** Absent only on a salvaged recording, whose checkpoint predated the configuration proof. */
+  fairness?: {
     differing_fields: string[]
     identical_fields: string[]
     identical_fields_sha256: string
-  }
+  } | null
   product: string
 }
 
@@ -129,16 +130,28 @@ export function DecisionExplainer({
 
   const fairnessNote = (
     <footer className="dx-fair">
-      <p>
-        The only configured difference between the two flies is{' '}
-        <span className="num dx-field">{fairness.differing_fields.join(', ')}</span>. Every
-        other setting is frozen and identical:{' '}
-        <span className="num">{fairness.identical_fields.length}</span> fields share the
-        checksum <span className="num" title={fairness.identical_fields_sha256}>
-          {shortHash(fairness.identical_fields_sha256)}
-        </span>
-        .
-      </p>
+      {fairness ? (
+        <p>
+          The only configured difference between the two flies is{' '}
+          <span className="num dx-field">{fairness.differing_fields.join(', ')}</span>. Every
+          other setting is frozen and identical:{' '}
+          <span className="num">{fairness.identical_fields.length}</span> fields share the
+          checksum <span className="num" title={fairness.identical_fields_sha256}>
+            {shortHash(fairness.identical_fields_sha256)}
+          </span>
+          .
+        </p>
+      ) : (
+        // Salvaged sessions are rebuilt from bars written before the kill, and the checkpoint
+        // they were rebuilt from carried no configuration proof. Saying so is the only honest
+        // option: the alternative is a checksum this recording cannot produce.
+        <p>
+          This recording carries no configuration proof: it was rebuilt from the bars and
+          checkpoint the session had already written, and the proof of what the two accounts
+          shared was not among them. Each fly's own panel below states only what it recorded
+          about itself.
+        </p>
+      )}
     </footer>
   )
 

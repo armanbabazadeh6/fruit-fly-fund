@@ -49,7 +49,9 @@ export function EquityChart({
     { key: 'buy_and_hold', label: 'Buy & hold', color: 'var(--violet)', values: buyAndHold, dash: '5 4' },
     { key: 'cash', label: 'Cash', color: 'var(--ink-4)', values: cash, dash: '2 4' },
   ]
-  const shown = Math.max(2, Math.min(bars, visibleBars ?? bars))
+  // At least one point: a live season that has just opened labels itself honestly ("1 of 1
+  // bars") rather than claiming a second bar it does not have yet.
+  const shown = Math.max(1, Math.min(bars, visibleBars ?? bars))
   const plotted = series.map((entry) => ({
     ...entry,
     values: entry.values.length ? entry.values.slice(0, shown) : [initialCapital, initialCapital],

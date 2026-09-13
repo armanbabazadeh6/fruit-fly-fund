@@ -296,19 +296,27 @@ export interface Recording {
     bar_seconds: number
     season: string
     rules: Record<string, string | number>
-    starting_conditions: Record<string, unknown> & {
-      fairness: {
-        differing_fields: string[]
-        identical_fields: string[]
-        identical_fields_sha256: string
-      }
-    }
-    hardware: Record<string, unknown>
+    /**
+     * Null on a salvaged recording: the checkpoint it was rebuilt from predates these fields,
+     * so the panels that prove fairness have nothing to prove it with and say so.
+     */
+    starting_conditions:
+      | (Record<string, unknown> & {
+          fairness: {
+            differing_fields: string[]
+            identical_fields: string[]
+            identical_fields_sha256: string
+          }
+        })
+      | null
+    hardware: Record<string, unknown> | null
     duration_seconds: number
     seconds_per_bar_mean: number
     truncated: boolean
     wall_mode: string
     inputs_identical_every_bar: boolean
+    /** Present when the recording was rebuilt from a killed session's own files. */
+    salvaged?: Record<string, unknown>
   }
   arms: ArmMeta[]
   season: {

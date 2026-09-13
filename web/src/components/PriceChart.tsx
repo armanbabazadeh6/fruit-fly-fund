@@ -56,7 +56,7 @@ export function PriceChart({
             {changePct >= 0 ? '+' : '−'}
             {Math.abs(changePct).toFixed(3)}%
           </span>{' '}
-          over {shown} bars
+          over {shown} {shown === 1 ? 'bar' : 'bars'}
         </span>
       </div>
       <div className="price-plot">

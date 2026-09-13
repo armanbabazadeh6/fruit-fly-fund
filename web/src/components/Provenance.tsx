@@ -13,8 +13,9 @@ interface ProvenanceProps {
  */
 export function Provenance({ recording }: ProvenanceProps) {
   const { run, summary, arms } = recording
-  const hardware = run.hardware as Record<string, unknown>
+  const hardware = (run.hardware ?? {}) as Record<string, unknown>
   const manifest = (hardware.data_manifest ?? {}) as Record<string, unknown>
+  const hardwareRecorded = Object.keys(hardware).length > 0
   const fairness = run.starting_conditions?.fairness
   const identical = Object.entries(run.starting_conditions ?? {}).filter(
     ([key]) => key !== 'fairness',
@@ -44,14 +45,26 @@ export function Provenance({ recording }: ProvenanceProps) {
 
         <div>
           <h3>Only one difference</h3>
-          <p>
-            Configuration proof: the two accounts differ in exactly{' '}
-            <span className="num">{fairness?.differing_fields?.join(', ') ?? 'learning'}</span>, with
-            the remaining <strong>{fairness?.identical_fields?.length ?? 0}</strong> fields frozen
-            under hash <span className="num">{shortHash(fairness?.identical_fields_sha256, 12)}</span>.
-            Both saw byte-identical charts this season:{' '}
-            <strong>{run.inputs_identical_every_bar ? 'yes' : 'not verified'}</strong>.
-          </p>
+          {fairness ? (
+            <p>
+              Configuration proof: the two accounts differ in exactly{' '}
+              <span className="num dx-field">{fairness.differing_fields.join(', ')}</span>, with
+              the remaining <strong>{fairness.identical_fields.length}</strong> fields frozen
+              under hash{' '}
+              <span className="num">{shortHash(fairness.identical_fields_sha256, 12)}</span>.
+              Both saw byte-identical charts this season:{' '}
+              <strong>{run.inputs_identical_every_bar ? 'yes' : 'not verified'}</strong>.
+            </p>
+          ) : (
+            // Rebuilt recordings carry no proof block, so the panel states the one fact the
+            // recording does hold instead of dressing a missing checksum as a verification.
+            <p>
+              No configuration proof was recorded: this run was rebuilt from the bars and
+              checkpoint it had already written, and the proof of what the two accounts shared
+              was not among them. Both saw byte-identical charts per bar, as recorded:{' '}
+              <strong>{run.inputs_identical_every_bar ? 'yes' : 'not verified'}</strong>.
+            </p>
+          )}
           <ul className="provenance-rules num">
             {identical.map(([key, value]) => (
               <li key={key}>
@@ -86,25 +99,34 @@ export function Provenance({ recording }: ProvenanceProps) {
               <span>clock</span>
               <span>{run.wall_mode}</span>
             </li>
-            <li>
-              <span>machine</span>
-              <span>
-                {String(hardware.machine ?? '?')} · {String(hardware.cpu_count ?? '?')} CPUs ·{' '}
-                {String(hardware.python ?? '?')} · numpy {String(hardware.numpy ?? '?')}
-              </span>
-            </li>
-            <li>
-              <span>accelerator</span>
-              <span>{String(hardware.gpu_acceleration ?? 'CPU only')}</span>
-            </li>
-            <li>
-              <span>dataset</span>
-              <span>
-                {String(manifest.release ?? 'MaleCNS v1.0')} ·{' '}
-                {Number(manifest.neurons ?? 0).toLocaleString()} neurons ·{' '}
-                {Number(manifest.edges ?? 0).toLocaleString()} connections
-              </span>
-            </li>
+            {hardwareRecorded ? (
+              <>
+                <li>
+                  <span>machine</span>
+                  <span>
+                    {String(hardware.machine ?? '?')} · {String(hardware.cpu_count ?? '?')} CPUs ·{' '}
+                    {String(hardware.python ?? '?')} · numpy {String(hardware.numpy ?? '?')}
+                  </span>
+                </li>
+                <li>
+                  <span>accelerator</span>
+                  <span>{String(hardware.gpu_acceleration ?? 'CPU only')}</span>
+                </li>
+                <li>
+                  <span>dataset</span>
+                  <span>
+                    {String(manifest.release ?? 'MaleCNS v1.0')} ·{' '}
+                    {Number(manifest.neurons ?? 0).toLocaleString()} neurons ·{' '}
+                    {Number(manifest.edges ?? 0).toLocaleString()} connections
+                  </span>
+                </li>
+              </>
+            ) : (
+              <li>
+                <span>hardware</span>
+                <span>not recorded — this run was rebuilt from the files it had already written</span>
+              </li>
+            )}
           </ul>
         </div>
 
