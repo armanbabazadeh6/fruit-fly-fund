@@ -156,7 +156,7 @@ scripts/experiment.sh          # train, fit a readout, exam, reset, readout exam
 
 `docs/` has the rest: [model](docs/model.md), [fairness](docs/fairness.md),
 [telemetry](docs/telemetry.md), [hardware](docs/hardware.md), [activity](docs/activity.md),
-[experiments](docs/experiments.md).
+[experiments](docs/experiments.md), [the live session](docs/live-session.md).
 
 ## Run it
 

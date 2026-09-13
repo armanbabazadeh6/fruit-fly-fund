@@ -856,6 +856,16 @@ class Arena:
         finally:
             self._close_arms(arms, threads)
         self._finish_bar_loop(times)
+        # A live season has no last bar, so every session ends by a stop — and a stop can land
+        # inside the backlog drain. The season still holds the bars the exchange closed after
+        # the last decision, and `_finalise` reads its bar count from the season: without this
+        # cut a stopped session writes a recording that contradicts its own observations
+        # (phantom bars in the chart, untraded bars counted as flat in the exposure fraction).
+        if processed < season.bars:
+            self.truncated = True
+            del season.closes[season.warmup_bars + processed :]
+            del season.times[season.warmup_bars + processed :]
+            season._rebuild()
         recording = self._finalise(
             run_id=run_id,
             season=season,

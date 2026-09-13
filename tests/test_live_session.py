@@ -216,3 +216,35 @@ def test_a_live_session_checkpoints_while_it_trades(tmp_path):
     assert final["status"] == "finished"
     assert final["bars_traded"] == len(recording["observations"]) == 3
     assert final["summary"]["bars"] == 3
+
+
+def test_a_stopped_session_records_only_the_bars_it_traded(tmp_path):
+    """A stop can land inside the backlog drain. What is written must be what was traded.
+
+    Found by review: `_finalise` reads the bar count from the season, which counts the bars the
+    exchange *closed*, not the ones the session *traded*. A stop mid-drain therefore wrote a
+    recording claiming five bars beside two observations — phantom points in the chart, and
+    untraded bars counted as flat in the exposure fraction.
+    """
+    clock = Clock(EPOCH)
+    feed = feed_for(clock, EPOCH - 3 * BAR, minutes_per_call=5)
+    arena = arena_for(tmp_path)
+    seen = []
+
+    def handler(kind, payload):
+        if kind == "live_progress":
+            seen.append(payload)
+
+    arena.on_event = handler
+    recording = arena.run_live(
+        feed, run_id="live-cut", out_root=tmp_path, stop=lambda: len(seen) >= 2
+    )
+    # Five bars closed in one poll; the stop landed after the second decision.
+    assert len(recording["observations"]) == 2
+    assert recording["summary"]["bars"] == 2
+    assert recording["run"]["bars"] == 2
+    assert len(recording["season"]["bars"]) == 2
+    assert recording["summary"]["arms"]["gordon"]["deployment"]["bars"] == 2
+    # ...and the recording says it was cut short rather than pretending it finished.
+    assert recording["run"]["truncated"] is True
+    assert recording["summary"]["truncated"] is True

@@ -8,9 +8,11 @@ The format is versioned. `schema` is checked by the server before a recording is
 """
 
 import json
+import os
 import math
 import statistics
 from decimal import Decimal
+from pathlib import Path
 
 SCHEMA = "flyvsly.recording/v1"
 
@@ -218,6 +220,19 @@ def write_jsonl(path, rows):
 
 
 def write_recording(path, recording):
-    with open(path, "w") as handle:
+    """Write a recording so a reader never sees half of one.
+
+    `live_state.json` is rewritten every bar of a live session, and a live session is exactly
+    the thing most likely to be killed mid-write. A plain open/write can leave a truncated
+    file — an unreadable JSON document claiming to be a checkpoint. Writing a sibling temp file
+    and renaming means the reader sees either the previous checkpoint or the new one, never a
+    fragment of either.
+    """
+    path = Path(path)
+    temporary = path.with_name(path.name + ".tmp")
+    with open(temporary, "w") as handle:
         json.dump(recording, handle, allow_nan=False, sort_keys=True)
         handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
