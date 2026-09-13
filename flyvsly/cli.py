@@ -348,6 +348,11 @@ def cmd_live(args):
     The session is a real one: the bars come from the public Coinbase candle endpoint as the
     exchange closes them, and both flies decide on them with the same rules a recorded season
     uses. Nothing here can place an order — there is no key, no account and no order path.
+
+    With `--resume <run id>` it continues a session that was killed instead of starting a new
+    one. The hub decides what that means and whether it can (see `RunHub.start_live`); what
+    this command adds is the flags a *starting* session needs, which a continuation takes from
+    the checkpoint it is continuing rather than from the command line.
     """
     import threading
 
@@ -370,7 +375,10 @@ def cmd_live(args):
         "reinforcement": args.reinforcement,
         "neural_ms": args.neural_ms,
         "label": args.label or f"live {args.product} {args.bar_seconds}s",
+        "brain_every": args.brain_every,
     }
+    if args.resume:
+        options["resume"] = args.resume
 
     httpd = None
     if args.serve:
@@ -380,6 +388,13 @@ def cmd_live(args):
             f"watching live at http://127.0.0.1:{args.port}/  "
             f"(recordings: {len(load_manifests(runs))})\n"
             f"stop with Ctrl-C, POST /api/run/stop, or the stop file",
+            flush=True,
+        )
+    elif args.resume:
+        print(
+            f"continuing live session {args.resume} · its own rules, engine and venue · "
+            f"paper only\n"
+            f"stop with Ctrl-C or the stop file",
             flush=True,
         )
     else:
@@ -393,7 +408,15 @@ def cmd_live(args):
     def stop_file_seen():
         return bool(args.stop_file) and Path(args.stop_file).exists()
 
-    hub.start_live(options)
+    started = hub.start_live(options)
+    if not started.get("started"):
+        # A resume that cannot be continued must not fall through to a fresh session, and the
+        # reason is the whole point of asking: print it and stop.
+        print(f"live session not started: {started.get('reason')}", flush=True)
+        if httpd is not None:
+            httpd.shutdown()
+            httpd.server_close()
+        return 1
     try:
         while hub.thread and hub.thread.is_alive():
             if stop_file_seen():
@@ -869,6 +892,26 @@ def main(argv=None):
         "--stop-file",
         default=None,
         help="stop when this file appears (checked between bars)",
+    )
+    live.add_argument(
+        "--resume",
+        metavar="RUN_ID",
+        default=None,
+        help=(
+            "continue the live session in <runs>/RUN_ID from the checkpoint and log it left "
+            "behind, instead of starting a new one; its own rules, engine, venue and warm-up "
+            "are used, since a continuation is the same experiment"
+        ),
+    )
+    live.add_argument(
+        "--brain-every",
+        type=int,
+        default=60,
+        metavar="BARS",
+        help=(
+            "checkpoint each fly's brain into <run>/brains/ every N bars, so a killed session "
+            "can be continued with the brain it had rather than from baseline (0 = never)"
+        ),
     )
     live.add_argument("--serve", action="store_true", help="also serve the web experience")
     live.add_argument("--port", type=int, default=7777)

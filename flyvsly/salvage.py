@@ -10,40 +10,31 @@ It is not lost, though. The session wrote its observations and a checkpoint as i
 everything a recording needs can be rebuilt from them: the bars, the curves, the fills, the
 fees. What cannot be rebuilt is whatever only lived in memory, and this module says exactly
 which parts those are rather than dressing a guess up as a recording.
+
+A kill is not necessarily the end of the session, either. `load_resume` reads the same two
+artifacts as a *continuation* rather than a conclusion — for `flyvsly live --resume` — and the
+line between the two is the same line throughout: what the session wrote down survives, and
+what was only in memory is stated as lost rather than reconstructed.
 """
 
 import dataclasses
 import json
+import sqlite3
 from decimal import Decimal
 from pathlib import Path
 
 from .arena import DISCLAIMERS, SCHEMA_VERSION, arm_settings, personas_for
 from .benchmark import buy_and_hold, cash
 from .config import ArenaRules, MarketSpec
-from .market import Season
+from .live import LIVE_DEFAULTS, observed_bars
+from .market import Season, _iso
+from .starting import StartingWeights
 from .telemetry import summarise_curve, write_jsonl, write_recording
-
-# The rules a live session runs unless it was told otherwise. Only used when the checkpoint
-# predates the metadata being written down, and always reported as rebuilt.
-LIVE_DEFAULTS = {
-    "engine": "neural",
-    "kind": "competition",
-    "bar_seconds": 60,
-    "warmup_bars": 120,
-}
 
 
 def _bars_from_observations(observations) -> tuple[list[float], list[int]]:
-    closes, times = [], []
-    for observation in observations:
-        market = observation.get("market") or {}
-        mid = market.get("mid")
-        if mid is None:
-            bid, ask = Decimal(str(market.get("bid", 0))), Decimal(str(market.get("ask", 0)))
-            mid = float((bid + ask) / 2)
-        closes.append(float(mid))
-        times.append(int(observation["t"]))
-    return closes, times
+    bars = observed_bars(observations)
+    return [close for _, close in bars], [opened for opened, _ in bars]
 
 
 def _trades_for(arm_id: str, observations) -> list[dict]:
@@ -145,7 +136,7 @@ def salvage_run(run_dir, force: bool = False) -> dict:
     rules = ArenaRules(**rules_data).validate() if rules_data else ArenaRules().validate()
     spec = MarketSpec(
         kind="coinbase",
-        product=str(checkpoint.get("product", LIVE_DEFAULTS["product"] if "product" in LIVE_DEFAULTS else "BTC-USDC")),
+        product=str(checkpoint.get("product", LIVE_DEFAULTS["product"])),
         bars=len(observations),
         bar_seconds=int(checkpoint.get("bar_seconds", LIVE_DEFAULTS["bar_seconds"])),
     )
@@ -317,3 +308,211 @@ def salvage_run(run_dir, force: bool = False) -> dict:
     checkpoint["salvaged_bars"] = len(observations)
     write_recording(checkpoint_path, checkpoint)
     return recording
+
+
+# -- continuing a killed session rather than finishing it --------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class ResumeState:
+    """What a killed live session left behind, in the shape a continuation needs.
+
+    What a resume cannot know is deliberately *absent* from this object rather than filled in
+    with something plausible: the brain the flies had when the process died, the decision that
+    was being made, the chart they were looking at. Everything here is something the session
+    wrote down before it was killed, and the arena states, per arm, which of it was enough.
+
+    ``brains`` is keyed by arm and carries the snapshot the session checkpointed (its bar and
+    the same ``weights`` provenance block a recorded run uses for a trained brain), or the name
+    of the file its checkpoint pointed at and did not find.
+    """
+
+    run_id: str
+    run_dir: Path
+    checkpoint: dict
+    observations: tuple
+    session_opened: int
+    bar_seconds: int
+    warmup_bars: int
+    product: str
+    venue: str
+    engine: str
+    kind: str
+    rules: dict | None
+    starting_conditions: dict | None
+    label: str | None
+    brains: dict
+    resumes: tuple
+    dropped_tail: bool = False
+
+    @property
+    def bars_traded(self) -> int:
+        return len(self.observations)
+
+
+def _read_observations(path: Path) -> tuple[list[dict], bool]:
+    """Every complete observation in the log, and whether a partial last line was dropped.
+
+    A kill can land inside the append of the line that was being written. That leaves a
+    truncated tail, and dropping it is the honest reading: everything before it is whole, and
+    the bar it was going to describe was never announced. A line that fails to parse anywhere
+    else is a corrupt log, and a corrupt log is not a session anyone can continue.
+    """
+    if not path.exists():
+        return [], False
+    text = path.read_text()
+    lines = [line for line in text.splitlines() if line.strip()]
+    rows: list[dict] = []
+    for index, line in enumerate(lines):
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            if index == len(lines) - 1 and not text.endswith("\n"):
+                return rows, True
+            raise ValueError(
+                f"{path.name} line {index + 1} is not an observation; the log is corrupt"
+            ) from None
+    return rows, False
+
+
+def _intended_bars(run_dir: Path) -> dict[str, int]:
+    """The newest bar each arm's ledger holds an order intent for, by arm.
+
+    Every order carries the bar it was decided on (`plan.neural_observation`), and the intent
+    is reserved before the fill and before the bar reaches the log. So the newest intent in a
+    ledger is the bar the session was working on when it died: normally the log's own last
+    bar, and — for a kill that landed inside the order path — one the log never recorded.
+    """
+    newest: dict[str, int] = {}
+    for path in sorted(Path(run_dir).glob("*.sqlite")):
+        try:
+            # Read-only, and no WAL recovery: the process that wrote this is gone, and a
+            # continuation must not be the thing that mutates a killed session's account.
+            with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as db:
+                rows = db.execute("SELECT plan FROM orders").fetchall()
+        except sqlite3.Error:
+            # A ledger that predates the orders table holds no intents. Its cash and positions
+            # are still read from it when the arena reopens the account.
+            continue
+        bars = []
+        for (plan,) in rows:
+            try:
+                bar = (json.loads(plan).get("neural_observation") or {}).get("t")
+            except (TypeError, ValueError):
+                continue
+            if bar is not None:
+                bars.append(int(bar))
+        if bars:
+            newest[path.stem] = max(bars)
+    return newest
+
+
+def _checkpointed_brains(run_dir: Path, checkpoint: dict) -> dict:
+    """The brain snapshots the session wrote, as its own checkpoint names them.
+
+    A live session checkpoints each fly's brain every few bars for exactly this reason: the
+    learned efficacies live in memory, so a session that checkpoints nothing has nothing for a
+    continuation to put back. The snapshot the checkpoint names is the newest one it had
+    written; a file it names and that is not on disk is reported as missing rather than
+    silently replaced by the baseline.
+    """
+    brains: dict[str, dict] = {}
+    for arm_id, entry in (checkpoint.get("brains") or {}).items():
+        entry = entry or {}
+        file = str(entry.get("file") or "")
+        path = run_dir / file
+        snapshot = {"bar": entry.get("bar"), "t": entry.get("t")}
+        if file and path.is_file():
+            # The provenance block a recording uses for any brain, so a resumed brain is
+            # checked with the same tools as a trained one.
+            snapshot["weights"] = StartingWeights("trained", path).describe()
+        else:
+            snapshot["missing"] = file or "the checkpoint named no file"
+        brains[str(arm_id)] = snapshot
+    return brains
+
+
+def load_resume(run_dir) -> ResumeState:
+    """Read a killed live session as the continuation it can be.
+
+    Refuses a session that already has a recording, and refuses one whose ledgers hold an
+    order for a bar the log never recorded. The first is a closed experiment whose record is
+    evidence; the second was killed inside the order path, where continuing would trade or
+    account a bar twice — the only two ways this feature could quietly corrupt a run, so both
+    are refusals rather than something to work around.
+    """
+    run_dir = Path(run_dir)
+    name = run_dir.name
+    checkpoint_path = run_dir / "live_state.json"
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(
+            f"{name} has no live_state.json: there is no live session to continue"
+        )
+    if (run_dir / "recording.json").exists():
+        raise FileExistsError(
+            f"{name} already has a recording.json: it finished, or it was salvaged from a "
+            "live_state.json that had no recording. A continuation would rewrite a closed "
+            "session's record from artifacts it can no longer be sure of."
+        )
+
+    checkpoint = json.loads(checkpoint_path.read_text())
+    observations, dropped_tail = _read_observations(run_dir / "observations.jsonl")
+    for index, observation in enumerate(observations):
+        if int(observation.get("i", -1)) != index:
+            raise ValueError(
+                f"{name} did not trade a continuous run of bars: observation {index} says "
+                f"i={observation.get('i')!r}. A continuation numbers its bars from that log, "
+                "so a hole in it would renumber every bar after the hole."
+            )
+    last_t = int(observations[-1]["t"]) if observations else None
+    ahead = {
+        arm: bar
+        for arm, bar in _intended_bars(run_dir).items()
+        if last_t is None or bar > last_t
+    }
+    if ahead:
+        held = ", ".join(f"{arm} at {_iso_bar(bar)}" for arm, bar in sorted(ahead.items()))
+        raise ValueError(
+            f"{name} was killed inside a bar, not between two: an order intent ({held}) names "
+            "a bar that observations.jsonl never recorded. Continuing would either trade that "
+            "bar again or account for its fill twice, so this session cannot be resumed. "
+            "Salvage it and start a new session."
+        )
+
+    bar_seconds = int(checkpoint.get("bar_seconds", LIVE_DEFAULTS["bar_seconds"]))
+    if checkpoint.get("session_opened") is not None:
+        session_opened = int(checkpoint["session_opened"])
+    elif observations:
+        session_opened = int(observations[0]["t"])
+    elif checkpoint.get("last_bar") is not None:
+        session_opened = int(checkpoint["last_bar"]) + bar_seconds
+    else:
+        raise ValueError(
+            f"{name}'s checkpoint does not say when the session opened — neither "
+            "`session_opened` nor `last_bar` is in it — so a continuation has no session "
+            "start to record."
+        )
+
+    return ResumeState(
+        run_id=str(checkpoint.get("run_id") or name),
+        run_dir=run_dir,
+        checkpoint=checkpoint,
+        observations=tuple(observations),
+        session_opened=session_opened,
+        bar_seconds=bar_seconds,
+        warmup_bars=int(checkpoint.get("warmup_bars", LIVE_DEFAULTS["warmup_bars"])),
+        product=str(checkpoint.get("product", LIVE_DEFAULTS["product"])),
+        venue=str(checkpoint.get("venue", LIVE_DEFAULTS["venue"])),
+        engine=str(checkpoint.get("engine") or LIVE_DEFAULTS["engine"]),
+        kind=str(checkpoint.get("kind") or LIVE_DEFAULTS["kind"]),
+        rules=checkpoint.get("rules"),
+        starting_conditions=checkpoint.get("starting_conditions"),
+        label=checkpoint.get("label"),
+        brains=_checkpointed_brains(run_dir, checkpoint),
+        resumes=tuple(checkpoint.get("resumes") or ()),
+        dropped_tail=dropped_tail,
+    )
+
+
+def _iso_bar(seconds) -> str:
+    return f"{_iso(int(seconds))} ({int(seconds)})"
