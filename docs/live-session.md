@@ -379,3 +379,73 @@ All paths are inside `runs/20260911-180303-live/recording.json` unless the file 
 | 6.3872 s / 7.0534 s mean, 28.602 s / 29.9088 s worst compute | `observations[].arms.<id>.compute_seconds` |
 | 6.3872 s (Gordon's mean) | `run.seconds_per_bar_mean` |
 | 1,914 polls, 21.105 s lag at end | `run.live.polls`, `run.live.lag_seconds_at_end` |
+
+## Checking a replay against the session it replays
+
+`flyvsly live` and a recorded season trade the same bars through the same arena, but nothing had
+ever checked that a live session and a replay of *its own* bars decide the same thing. If those
+two can disagree, every live-versus-recorded comparison this project makes rests on an
+assumption nobody tested. `tests/test_live_parity.py` tests it against a session's own log —
+the 429 bars above, with their mids and the decision each fly made on each. The answer depends
+on the engine:
+
+- **Procedural, fully offline.** The procedural backend is a pure function of the chart it has
+  been shown, so a replay over the same window must reproduce every decision exactly. It does.
+  `pytest tests/test_live_parity.py::test_a_live_session_replays_to_the_same_decisions` also
+  hashes the frames each arm was handed, so agreement cannot come from two wrong paths
+  cancelling out, and it needs no graph and no network.
+- **Neural, gated.** The neural arm's synapses move with every bar's reinforcement, and its
+  warm-up chart was never written down. A replay therefore starts from a different brain at
+  the same bars, and exact decision parity is not a property the log can carry. The gated test
+  asserts the half that *is* reproducible — the market inputs — and reports the decision
+  agreement rather than forcing it green; it needs `FLYVSLY_NEURAL_TEST=1` and a prepared
+  graph (`FLYVSLY_DATA=<data>`), and skips with that reason otherwise.
+
+What no replay from a log can reproduce, for either engine:
+
+| lost when the session was killed | consequence |
+| --- | --- |
+| the 120-bar warm-up chart | bars 0–98 of a rebuild are a different chart: their frames do not match the log, and the procedural rule holds at bar 0 where the session, which saw its warm-up, bought |
+| the neural brain between checkpoints | a replay from baseline is a different experiment; only `--brain-every` snapshots narrow the gap, and they restore one bar's brain, not the per-bar history |
+| the venue's own history | `CandleFeed.resume` can rebuild the warm-up only while the venue still serves those bars; Kraken keeps a page of candles, not a memory |
+
+The line is exact and checked. `market_frame` draws `history[-100:]`, so once 100 logged bars
+stand behind the bar being decided the rebuilt frame is byte-identical to the one recorded — bar
+99 onward in the salvaged session, and bars 0–98 are exactly the ones the missing warm-up fed.
+`test_the_salvaged_session_reproduces_its_frames_where_the_log_covers_the_window` asserts that
+boundary against the real fixture. It skips on a fresh checkout, where `runs/` is absent, and
+takes `FLYVSLY_LIVE_RUN=<run directory>` to point at a copy.
+
+## More than one live session
+
+One session is one path through one stretch of market, and `flyvsly live-report` has nothing to
+pool until there is more than one. `scripts/live-campaign.sh M K` runs M live sessions of K
+traded bars back to back under `scripts/live-supervisor.sh`, then writes the pooled report to
+`results/live-campaign.md`:
+
+    scripts/live-campaign.sh 5 180          # five sessions of three hours, unattended
+    scripts/live-campaign.sh --dry-run 5 180
+    scripts/live-campaign.sh --help
+
+Each session ends when its own checkpoint (`<run>/live_state.json`) records K traded bars: the
+campaign watches the newest checkpoint written since the session started, touches the shared
+stop file, and lets the bar in flight finish so the session still writes a clean recording.
+Nothing is cut off mid-decision. A session that crashes is restarted by the supervisor as usual;
+the campaign follows the restarted session's checkpoint because it watches the newest one, not
+a run id it cannot know in advance. The watchdog log and each session's own output are kept
+under `runs/live-campaign-<stamp>/`.
+
+It will not start a second session on top of a running one. A lock in `runs`
+(`live-campaign.lock`) holds the campaign's pid and is refused while that pid is alive, and an
+already-running `flyvsly live` is refused before the first session starts. Ctrl-C touches the
+stop file, lets the current bar finish, cleans the lock up and exits 130. `--dry-run` prints the
+plan and the exact supervisor command per session without starting one.
+
+**A first campaign should be small.** At a 60 s bar, M sessions of K bars occupy about M×K
+minutes of wall time, so the useful first run is M=5, K=180: five three-hour sessions, about
+fifteen hours, fits an overnight run and gives `live-report` five rows — the smallest number
+that is a distribution rather than a point. The observed session produced roughly nine fills an
+hour for the learning arm, so 180 bars is enough for a comparison to have something in it,
+while still being five consecutive hours of one product in one market. Consecutive sessions
+share a regime, not just a market: the report describes that window and nothing wider, and five
+paths through it do not become five markets.

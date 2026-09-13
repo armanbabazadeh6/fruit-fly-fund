@@ -181,6 +181,17 @@ class LiveSeason:
         return self.warmup_bars
 
     @property
+    def window(self) -> Season:
+        """The chart so far as a fixed ``Season``: exactly the market a replay is run over.
+
+        The growing season is already a ``Season`` underneath (see :meth:`_rebuild`), and
+        handing that object out is what lets a replay read *this* market rather than rebuild
+        something that merely resembles it — the same closes, the same timestamps, the same
+        quote arithmetic. Nothing is copied, so the two cannot drift apart.
+        """
+        return self._view
+
+    @property
     def next_bar_opened(self) -> int:
         """When the next tradable bar opens.
 
