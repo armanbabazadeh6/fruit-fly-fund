@@ -240,6 +240,10 @@ export function asRecording(live: LiveRun): Recording {
       repeat: live.repeat,
       bars,
       bar_seconds: live.barSeconds,
+      // A live neural hub announces the same population description a recording carries, on
+      // each arm's backend. Reading it lets the brain scan and its inspector draw the cells a
+      // streaming run is actually measuring; a procedural run has none.
+      population: arms[0]?.backend?.population ?? null,
       season: seasonDescription(live),
       rules,
       starting_conditions: {

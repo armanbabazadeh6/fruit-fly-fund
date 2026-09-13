@@ -174,6 +174,8 @@ export interface BackendDescription {
   rule?: string
   claims?: string
   parameters?: Record<string, number>
+  /** The cells this arm's population vectors describe. Neural backends record it. */
+  population?: PopulationDescription | null
 }
 
 /** Where an arm's brain started: reconstructed baseline, or restored from a checkpoint. */

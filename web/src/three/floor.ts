@@ -99,6 +99,17 @@ export interface FloorHandle {
   setPaused(paused: boolean): void
   setBrainMode(enabled: boolean): void
   setView(view: 'floor' | 'gordon' | 'warren'): void
+  /**
+   * Which cell one point of the canvas is over, in normalised device coordinates. The click
+   * handler and any scripted check both go through this, so a pick behaves identically
+   * whether a hand or a test made it. Null when the scan is off or the point misses it.
+   */
+  pickBrainAt(x: number, y: number): { armId: string; cell: number } | null
+  /**
+   * Mark one cell as picked on its own fly and clear the other, so the panel and the scan
+   * agree even when the selection was stepped to from the panel rather than clicked.
+   */
+  selectBrainCell(armId: string, cell: number): void
   diagnostics(): Record<string, unknown>
   dispose(): void
 }
@@ -144,6 +155,11 @@ export interface FloorOptions {
   fov?: number
   /** Overall fly scale; the mascot should not dominate the desk it sits at. */
   flyScale?: number
+  /**
+   * A cell was picked out of the brain scan. The floor resolves the click to one cell of one
+   * fly's recorded population and hands both to the caller, which is what opens the panel.
+   */
+  onBrainPick?: (armId: string, cell: number) => void
 }
 
 export function createFloor(container: HTMLElement, options: FloorOptions = {}): FloorHandle {
@@ -650,6 +666,54 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
   }
 
   /**
+   * Which fly's cell one canvas point is over, if any.
+   *
+   * The two scans sit far apart, so the nearest hit across both stations is the one the
+   * reader pointed at. Silent cells are still hit: the ray tests the dots' geometry, not
+   * their brightness, because a cell that never fires is exactly what the panel must be able
+   * to say. Null when the scan is off — the dots are hidden, so a click cannot invent a cell.
+   */
+  const pickBrain = (x: number, y: number): { armId: string; cell: number } | null => {
+    if (!brainMode) return null
+    // The pick is not tied to the render loop, so the camera and the scene are brought up to
+    // date before the ray is cast rather than trusting the last frame's matrices.
+    camera.updateMatrixWorld()
+    scene.updateMatrixWorld(true)
+    raycaster.setFromCamera(new THREE.Vector2(x, y), camera)
+    let best: { armId: string; cell: number; distance: number } | null = null
+    for (const station of stations) {
+      if (!station.arm) continue
+      const hit = station.fly.brain.pick(raycaster)
+      if (hit && (!best || hit.distance < best.distance)) {
+        best = { armId: station.arm.id, cell: hit.index, distance: hit.distance }
+      }
+    }
+    return best ? { armId: best.armId, cell: best.cell } : null
+  }
+
+  /** Mark the picked cell on its own fly and clear the other, then draw the change. */
+  const selectBrainCell = (armId: string, cell: number) => {
+    for (const station of stations) {
+      station.fly.brain.setSelected(station.arm?.id === armId ? cell : null)
+    }
+    renderFrame(0)
+  }
+
+  const onCanvasClick = (event: MouseEvent) => {
+    if (!brainMode) return
+    const rect = renderer.domElement.getBoundingClientRect()
+    if (!rect.width || !rect.height) return
+    const picked = pickBrain(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -(((event.clientY - rect.top) / rect.height) * 2 - 1),
+    )
+    if (!picked) return
+    selectBrainCell(picked.armId, picked.cell)
+    options.onBrainPick?.(picked.armId, picked.cell)
+  }
+  renderer.domElement.addEventListener('click', onCanvasClick)
+
+  /**
    * One diagnostics object, used by both the DOM channel and the debug hook.
    *
    * There used to be two of these — one for the `data-floor` attribute and one behind
@@ -709,7 +773,14 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
             return bounds
           })(),
           deskNdc: ndcBounds(station.desk),
-          brain: { cells: station.fly.brain.cellCount, lit: station.fly.brain.litCount },
+          brain: {
+            cells: station.fly.brain.cellCount,
+            lit: station.fly.brain.litCount,
+            picked: station.fly.brain.selectedIndex,
+            // The cloud's centre, so a scripted click can aim at the scan instead of
+            // guessing where a fly's head sits in the frame.
+            centre: project(station.fly.brain.root),
+          },
           lampNdc: ndcBounds(station.lamp),
           cupNdc: ndcBounds(station.cup),
           visible: {
@@ -795,6 +866,8 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
       publishDiagnostics()
     },
     setView(next) { view = next; renderFrame(0); publishDiagnostics() },
+    pickBrainAt: pickBrain,
+    selectBrainCell,
     setTradeCam(enabled: boolean) {
       tradeCam.enabled = enabled
       if (!enabled) {
@@ -818,6 +891,7 @@ export function createFloor(container: HTMLElement, options: FloorOptions = {}):
       resizeObserver.disconnect()
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('pointermove', onPointerMove)
+      renderer.domElement.removeEventListener('click', onCanvasClick)
       scene.traverse((object) => {
         const mesh = object as THREE.Mesh
         if (!mesh.geometry) return
