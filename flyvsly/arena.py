@@ -806,9 +806,24 @@ class Arena:
         times = []
         processed = 0
         lag = 0.0
+        # Described once and reused: a killed session leaves nothing in memory, so the
+        # checkpoint has to carry enough for `flyvsly salvage` to rebuild a recording from it.
+        live_meta = {
+            "label": config.label or "live session",
+            "engine": config.engine,
+            "kind": config.kind,
+            "rules": json.loads(json.dumps(dataclasses.asdict(self.rules), default=str)),
+            "starting_conditions": conditions,
+            "arms": [arm.describe() for arm in arms],
+            "population": (
+                arms[0].backend.population_description
+                if hasattr(arms[0].backend, "population_description")
+                else None
+            ),
+        }
         # A session states itself from the first moment, before it has traded anything: an
         # interrupted session must be visible as a session, not as an empty directory.
-        self._checkpoint_live(out, season, feed, session_opened, lag, processed)
+        self._checkpoint_live(out, season, feed, session_opened, lag, processed, live_meta)
         try:
             while not stop():
                 if not feed.poll():
@@ -830,7 +845,7 @@ class Arena:
                     )
                     # Durable first, announce second: a bar that reached the page but not
                     # the disk would be a bar nobody can audit.
-                    self._checkpoint_live(out, season, feed, session_opened, lag, processed)
+                    self._checkpoint_live(out, season, feed, session_opened, lag, processed, live_meta)
                     self.emit(
                         "live_progress",
                         bars=processed,
@@ -878,7 +893,7 @@ class Arena:
             write_recording(checkpoint, state)
         return recording
 
-    def _checkpoint_live(self, out, season, feed, session_opened, lag, processed):
+    def _checkpoint_live(self, out, season, feed, session_opened, lag, processed, meta):
         """Make the session's own record durable as it trades.
 
         A live session can be stopped, powered off or killed at any minute. Each arm's SQLite
@@ -903,6 +918,7 @@ class Arena:
                 "last_bar": season.timestamp(processed - 1) if processed else None,
                 "lag_seconds": lag,
                 "polls": feed.polls,
+                **meta,
                 # What a restart can and cannot pick up, stated rather than implied.
                 "on_restart": {
                     "market": "the window is rebuilt from the public candles for these bars",

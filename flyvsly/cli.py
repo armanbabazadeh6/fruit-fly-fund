@@ -423,6 +423,47 @@ def cmd_live(args):
     return 0
 
 
+def cmd_salvage(args):
+    """Rebuild a recording for a live session that was killed instead of stopped.
+
+    Every traded bar is already on disk. This turns those bars back into a recording the
+    browser, the report and the comparison can read, and says plainly which parts had to be
+    rebuilt because they only ever lived in memory.
+    """
+    from .salvage import salvage_run
+
+    runs = Path(args.runs)
+    if args.run_id:
+        targets = [runs / args.run_id]
+    else:
+        targets = sorted(
+            path.parent
+            for path in runs.glob("*/live_state.json")
+            if not (path.parent / "recording.json").exists()
+        )
+    if not targets:
+        print("nothing to salvage: every live session under", runs, "has a recording", flush=True)
+        return 0
+    failed = 0
+    for target in targets:
+        try:
+            recording = salvage_run(target, force=args.force)
+        except (FileExistsError, FileNotFoundError, ValueError) as error:
+            print(f"{target.name}: {error}", flush=True)
+            failed += 1
+            continue
+        summary = recording["summary"]
+        arms = ", ".join(
+            f"{arm_id} {summary['arms'][arm_id]['return_pct']:+.3f}%" for arm_id in summary["arms"]
+        )
+        print(
+            f"{target.name}: salvaged {summary['bars']} bars · {arms} · "
+            f"metadata {summary['salvaged']['arm_metadata'].split(':')[0]}",
+            flush=True,
+        )
+    return 1 if failed else 0
+
+
 def cmd_publish(args):
     """Copy recordings next to the web bundle so a static host has real data to show."""
     import shutil
@@ -843,6 +884,19 @@ def main(argv=None):
     fitreadout.add_argument("--horizon", type=int, default=1, help="bars ahead to predict")
     fitreadout.add_argument("--minimum-bars", type=int, default=120)
     fitreadout.set_defaults(func=cmd_fitreadout)
+
+    salvage = sub.add_parser(
+        "salvage", help="rebuild a recording for a live session that was killed"
+    )
+    salvage.add_argument("--runs", default="runs")
+    salvage.add_argument(
+        "run_id",
+        nargs="?",
+        default=None,
+        help="one run to salvage; omit to salvage every live session that has no recording",
+    )
+    salvage.add_argument("--force", action="store_true", help="replace an existing recording")
+    salvage.set_defaults(func=cmd_salvage)
 
     publish = sub.add_parser(
         "publish", help="copy recordings next to the web bundle for a static host"
