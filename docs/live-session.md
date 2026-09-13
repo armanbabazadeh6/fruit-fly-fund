@@ -226,6 +226,7 @@ options all have a default, so the line above is a complete unattended run:
 | `--max-failures N` | 5 | consecutive crashes before the supervisor gives up |
 | `--backoff`, `--backoff-ceiling` | 5 s, 300 s | the retry wait, doubling from `--backoff` to the ceiling |
 | `--healthy-seconds` | 600 | a run this long clears the crash ladder |
+| `--stall-bars N` | 5 | bar lengths without a new bar before a running session is treated as failed |
 
 The policy is deliberately dull. Exit 0 or a stop file is an expected end: the supervisor stops
 with it, exit 0, and restarts nothing. Anything else is a crash: the session is restarted after
@@ -238,18 +239,24 @@ not a crash: the console delivers it to the session as well, so the session stop
 it is on, and an interrupt that reaches the supervisor rather than the session is recorded as
 `interrupted` and exits 130.
 
-What a restart is: a new process, and therefore a new session — `flyvsly live` mints a run id
-from the clock, so the restart opens a fresh run directory with its own $100 paper accounts and
-its own recording. Nothing from the session that died is lost (`flyvsly salvage` rebuilds its
-recording from the checkpoint it had already written), but the restart's equity curve does not
-continue the dead one's. Where each outcome is written down, one line each — the values below are
-the shape of a record, not a session that ran:
+What a restart is: a new process, and either a continuation or a new session, decided by the
+checkpoint the dead one left behind. When `flyvsly live --resume` would accept that checkpoint —
+it still says `running`, there is no recording beside it, the log has no hole, and no order
+intent names a bar the log never recorded — the restart *continues* the session: same run
+directory, the same $100 paper accounts at the equity they had reached, and the bars already
+traded read back from the log rather than traded again. When there is no such checkpoint the
+restart is a new session, `flyvsly live` minting a run id from the clock, with its own accounts
+and its own recording — and the log says which of the two happened, and why, when it was the
+second. Nothing from the session that died is lost either way: `flyvsly salvage` rebuilds the
+recording of one that cannot be continued. Where each outcome is written down, one line each —
+the values below are the shape of a record, not a session that ran:
 
 ```sh
 tail -f runs/live-supervisor.jsonl
-{"ts": "2026-09-12T01:14:03Z", "event": "start", "attempt": 1, "command": ["…", "live"]}
+{"ts": "2026-09-12T01:14:03Z", "event": "start", "attempt": 1, "command": ["…", "live"], "mode": "fresh", "run_id": null}
 {"ts": "2026-09-12T01:14:07Z", "event": "exit", "attempt": 1, "exit_code": 1, "runtime_seconds": 3.8, "expected": false, "reason": "crash"}
-{"ts": "2026-09-12T01:14:12Z", "event": "restart", "attempt": 2, "failures": 1, "backoff_seconds": 5.0, "last_exit_code": 1}
+{"ts": "2026-09-12T01:14:12Z", "event": "restart", "attempt": 2, "failures": 1, "backoff_seconds": 5.0, "last_exit_code": 1, "mode": "resume", "run_id": "20260912-011403-live"}
+{"ts": "2026-09-12T03:40:00Z", "event": "restart", "attempt": 5, "failures": 3, "backoff_seconds": 20.0, "last_exit_code": 1, "mode": "fresh", "reason": "resume_refused", "error": "… already has a recording.json: it finished, or it was salvaged…"}
 ```
 
 **What this has not been verified against.** No real session has run under the supervisor: it
@@ -257,9 +264,11 @@ needs the live venue and the 1.6 GB graph, so the policy above is pinned by test
 hours of market, and `pytest tests/test_supervise.py -q` is the check — a clean exit is not
 retried, a crash is retried with a growing wait, the ceiling and the give-up are enforced, and
 the script itself is driven end to end against a fake session that crashes once and then exits 0
-(the fake is what `FLYVSLY_SESSION` is for; it is also how the Docker form is run). The one
-thing the supervisor cannot do for you is notice that a *running* session has stopped trading
-without dying — for that, watch `runs/live-supervisor.session.log` and the browser.
+(the fake is what `FLYVSLY_SESSION` is for; it is also how the Docker form is run), and again
+against a fake that leaves a running checkpoint so the script's own resume path is exercised.
+The silent-session check is pinned the same way: a session whose checkpoint shows no new bar for
+`--stall-bars` bar lengths is ended and restarted, and the section at the end of this page says
+what that can and cannot tell apart.
 ## Continuing a session instead of writing it off
 
 A kill used to end the experiment. `flyvsly salvage` turned the bars into a recording and the
@@ -379,3 +388,88 @@ All paths are inside `runs/20260911-180303-live/recording.json` unless the file 
 | 6.3872 s / 7.0534 s mean, 28.602 s / 29.9088 s worst compute | `observations[].arms.<id>.compute_seconds` |
 | 6.3872 s (Gordon's mean) | `run.seconds_per_bar_mean` |
 | 1,914 polls, 21.105 s lag at end | `run.live.polls`, `run.live.lag_seconds_at_end` |
+
+## A restart that stays in the same session, and one that notices silence
+
+Two things the supervisor could not do before, both of them about a session that has stopped
+being the experiment it was started as. It is written as a section of its own because it
+supersedes parts of "Running a session unattended" above: a restart is now a continuation
+whenever one is possible, and the thing that watch could not do — notice a session that is alive
+and no longer trading — it now does.
+
+**A crash continues the run it killed, when the disk allows it.** The supervisor used to restart
+the *process*, and `flyvsly live` minted a run id from the clock, so a session that died after
+429 bars came back as a new experiment with a fresh $100 account and its own recording — the
+equity curve restarted, and the run that had actually traded the market was only salvageable
+after the fact. It now asks the disk before every relaunch, through the same reader
+`flyvsly live --resume` uses (`salvage.load_resume`), and launches `--resume <run id>` when the
+answer is yes. What "yes" means is the loader's own list, not the supervisor's: a checkpoint
+that still says `running`, no `recording.json` beside it, a log with no hole in it, no order
+intent naming a bar the log never recorded, and a `session_opened` (or a `last_bar` to date the
+session from). None of that logic lives here; a checkpoint the loader refuses gets a fresh
+session, and the log carries the refusal verbatim.
+
+A continuation's own death is judged as a continuation. If a resumed process dies without trading
+a single bar — a refused prime, a missing graph, a bar the checkpoint could not open — the next
+launch is a *new* session, recorded as `resume_failed`, rather than asking the same run again:
+a checkpoint that exists but cannot actually be continued must not spend the whole crash ladder
+while a market nobody is trading goes by. If it did trade at least one bar before dying, it was
+the session, and the next launch continues it again. Resumability is re-read on every crash, so
+a session that writes its own recording before a later crash is refused from then on, exactly as
+`--resume` would refuse it.
+
+The vocabulary an operator can grep for afterwards, one record per decision as before:
+
+| record | field | says |
+| --- | --- | --- |
+| `start` | `mode`, `run_id` | `fresh`, or `resume` with the run this launch continues; `command` shows the `--resume` it was given |
+| `exit` | `resumed`, `bars_traded` | for a continued attempt: the run it was continuing and the bar count its checkpoint ended on |
+| `restart` | `mode` + `run_id` or `reason` | `resume` and which run, or `fresh` with why: `no_runs_dir`, `no_checkpoint`, `resume_refused` (with `error`), `resume_failed` (with `error`) |
+
+**A running session that writes no new bar is failed too.** Dying is not the only way to stop
+trading: the loop can wedge, or the venue can stop publishing, and the process stays healthy and
+quiet while the equity curve goes flat. The supervisor now polls the child instead of blocking on
+it, and samples the session's own checkpoint every five seconds, so a session is judged on what
+it writes rather than on the fact that it exists. `last_bar` is the *open* of the newest bar
+traded, so the session is complete once that bar closes at `last_bar + bar_seconds`; if that
+moment is more than `--stall-bars` bar lengths in the past, the session is ended — terminate
+first, kill after ten seconds — and the crash policy above restarts it, as a continuation when
+the checkpoint still allows one. Ending it is not optional: the restart opens the same run
+directory, and two processes trading one account is worse than the few bars the kill costs.
+
+The threshold is five bar lengths, and the number is the feed's, not a round guess. `live.py`
+already refuses to *start* a session on a venue whose newest bar is more than
+`STALE_WINDOW_BARS = 5` bars old, so the supervisor and the session agree on what "this market
+has gone quiet" means. Against the recorded session that is 300 s of silence at 60 s bars, and
+every measured number sits far inside it: 1914 polls over 429 bars — one every ~13 s, at most the
+15 s `--poll` ceiling — a 7.05 s mean bar of compute and a 29.9 s worst one, and 21.1 s of lag at
+the end. A healthy session writes a bar inside 300 s by an order of magnitude, and a wedged one
+is caught within five minutes.
+
+Two details keep the watchdog from firing on a session that is merely starting. Before the first
+bar there is no `last_bar`, so the checkpoint's own write time — which is written before the loop
+starts — is the reference instead. And both references are floored at the attempt's own start,
+because a resumed session opens with a `last_bar` from the process that died: days old if the
+host was down, and not the silence of the session that is recovering from it.
+
+**What the watchdog cannot tell apart, and cannot see.** A venue that has stopped publishing bars
+and a process that has wedged look identical from outside — both are bars that stopped arriving —
+so the supervisor acts on the silence without claiming to know which it was. It restarts in both
+cases, and a venue that really has stopped is refused by the restarted session's own prime, which
+ends the ladder in a give-up that names the venue and the newest bar it did close. Nor is a bar
+that is merely *bad* visible: any bar within the window is progress, however badly the fly traded
+it, and a bar that takes longer than the window to compute is indistinguishable from no bar at
+all — at 5 bars and the recorded 29.9 s worst compute there is room for that, but not an
+unbounded one. And the watch reads files, so it needs `--runs` to point at the directory the
+session writes: the module's own CLI leaves it unset unless told, the script always passes it.
+
+**What is not verified here.** No real session has yet run under this supervisor, so all of the
+above is pinned by `tests/test_supervise.py` against injected clocks, a fake child and a
+checkpoint the test writes — a crash with a resumable checkpoint continues that run id, a crash
+with none starts a new session and says so, a refused checkpoint falls back with the loader's own
+message, a continuation that dies without trading falls back, a checkpoint that keeps moving is
+never flagged (both sides of the 300 s boundary are pinned), and the script's own resume path is
+driven end to end against a fake session that leaves a running checkpoint before it crashes. What
+those tests cannot show is that a real killed neural session resumes under the supervisor, or
+that a real wedged process is caught: both need the live venue and the 1.6 GB graph, and belong
+on the host that has them.

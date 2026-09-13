@@ -2,15 +2,17 @@
 # Run a live paper session under supervision, so a crash becomes a restart instead of an outage.
 #
 # The session itself is `flyvsly live`; this wraps it in `flyvsly.supervise`, which restarts it
-# with a bounded backoff when it dies unexpectedly, stops for good when the session stops
-# cleanly or the stop file appears, gives up after a run of crashes, and appends one JSON Lines
-# record for every decision. The policy and its reasons are in flyvsly/supervise.py.
+# with a bounded backoff when it dies unexpectedly — continuing the run it was writing when the
+# checkpoint allows that, and starting a new one when it does not — ends and restarts a session
+# that is alive but has written no new bar for `--stall-bars` bar lengths, stops for good when
+# the session stops cleanly or the stop file appears, gives up after a run of crashes, and
+# appends one JSON Lines record for every decision. The policy is in flyvsly/supervise.py.
 #
 # Usage:
 #   scripts/live-supervisor.sh [supervisor options] [session flags...]
 #
 # Supervisor options (everything else goes to the session):
-#   --runs DIR                 where sessions are written (default: runs)
+#   --runs DIR                 where sessions are written and read back (default: runs)
 #   --log FILE                 append-only JSON Lines supervisor log
 #                              (default: <runs>/live-supervisor.jsonl)
 #   --stop-file FILE           stop when this file appears (default: <runs>/live.stop)
@@ -20,6 +22,8 @@
 #   --backoff SECONDS          wait before the first retry, doubling each time (default: 5)
 #   --backoff-ceiling SECONDS  longest wait between retries (default: 300)
 #   --healthy-seconds SECONDS  a run this long clears the crash ladder (default: 600)
+#   --stall-bars N             bar lengths without a new bar before a running session is
+#                              treated as failed and restarted (default: 5)
 #   -h, --help
 #
 # Any other argument is passed through to the session verbatim, so the session's own flags work
@@ -32,6 +36,9 @@
 # supervise something else — the same session in Docker, for instance:
 #   FLYVSLY_SESSION="docker run --rm -v $PWD:/app flyvsly live --engine neural" \
 #     scripts/live-supervisor.sh
+# The supervisor reads the session's checkpoints under `--runs`, so an override has to write its
+# run directories there too: continuing a killed session and noticing a silent one both read
+# what the session wrote.
 #
 # Paper only. Nothing here can place an order.
 set -euo pipefail
@@ -64,6 +71,7 @@ MAX_FAILURES=""
 BACKOFF=""
 BACKOFF_CEILING=""
 HEALTHY=""
+STALL_BARS=""
 SESSION=()
 
 while [ $# -gt 0 ]; do
@@ -76,6 +84,7 @@ while [ $# -gt 0 ]; do
     --backoff) need "$@"; BACKOFF="$2"; shift 2 ;;
     --backoff-ceiling) need "$@"; BACKOFF_CEILING="$2"; shift 2 ;;
     --healthy-seconds) need "$@"; HEALTHY="$2"; shift 2 ;;
+    --stall-bars) need "$@"; STALL_BARS="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     --) shift; SESSION+=("$@"); break ;;
     *) SESSION+=("$1"); shift ;;
@@ -86,11 +95,12 @@ LOG="${LOG:-$RUNS/live-supervisor.jsonl}"
 STOP_FILE="${STOP_FILE:-$RUNS/live.stop}"
 SESSION_LOG="${SESSION_LOG:-$RUNS/live-supervisor.session.log}"
 
-SUPERVISOR=(--log "$LOG" --stop-file "$STOP_FILE" --session-log "$SESSION_LOG")
+SUPERVISOR=(--log "$LOG" --stop-file "$STOP_FILE" --session-log "$SESSION_LOG" --runs "$RUNS")
 if [ -n "$MAX_FAILURES" ]; then SUPERVISOR+=(--max-failures "$MAX_FAILURES"); fi
 if [ -n "$BACKOFF" ]; then SUPERVISOR+=(--backoff "$BACKOFF"); fi
 if [ -n "$BACKOFF_CEILING" ]; then SUPERVISOR+=(--backoff-ceiling "$BACKOFF_CEILING"); fi
 if [ -n "$HEALTHY" ]; then SUPERVISOR+=(--healthy-seconds "$HEALTHY"); fi
+if [ -n "$STALL_BARS" ]; then SUPERVISOR+=(--stall-bars "$STALL_BARS"); fi
 
 if [ -n "${FLYVSLY_SESSION:-}" ]; then
   # The override is a whole command line, run by the shell. `bash` on PATH is not good enough
