@@ -5,6 +5,7 @@
     flyvsly run                    one or more seasons of the competition
     flyvsly serve                  serve the browser experience with a live feed
     flyvsly list / report          what has been run, and what the repeats say
+    flyvsly live-report            what the live sessions say once there is more than one
 
 Paper trading only. No credentials, no account, no order leaves this process.
 """
@@ -714,6 +715,34 @@ def cmd_report(args):
     return 0
 
 
+def cmd_live_report(args):
+    """Pool the live sessions that accumulate over days into one comparison.
+
+    `flyvsly report` pools repeated seasons; a live session is a different unit — it grows for
+    as long as it is left running, it shares no window with any other, and it may have been
+    killed and rebuilt rather than stopped. The aggregate refuses to average sessions that ran
+    different products, bar lengths or rule sets, and prints which field kept them apart.
+    """
+    from .report import live_markdown_table, live_text, load_manifests, summarise_live
+
+    report = summarise_live(load_manifests(args.runs))
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return 0
+    if args.table:
+        table = live_markdown_table(report)
+        if args.write:
+            path = Path(args.write)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(table + "\n")
+            print(f"wrote {path}")
+        else:
+            print(table)
+        return 0
+    print(live_text(report))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="flyvsly", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -925,6 +954,15 @@ def main(argv=None):
     report.add_argument("--table", action="store_true", help="markdown table of every group")
     report.add_argument("--write", default=None, help="write the table to this path")
     report.set_defaults(func=cmd_report)
+
+    live_report = sub.add_parser(
+        "live-report", help="pool the live sessions that accumulate over days"
+    )
+    live_report.add_argument("--runs", default="runs")
+    live_report.add_argument("--json", action="store_true")
+    live_report.add_argument("--table", action="store_true", help="markdown table of every group")
+    live_report.add_argument("--write", default=None, help="write the table to this path")
+    live_report.set_defaults(func=cmd_live_report)
 
     args = parser.parse_args(argv)
     return args.func(args) or 0
