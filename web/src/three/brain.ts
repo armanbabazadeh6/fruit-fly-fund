@@ -86,13 +86,18 @@ export function buildBrain() {
 
   let dots: THREE.Mesh[] = []
   let types: string[] = []
+  let groups: CellGroup[] = []
   let lit = 0
+  /** The cell the reader picked out of the scan, or null. Only one at a time. */
+  let selected: number | null = null
 
   /** One dot per measured cell, in the order the population vector is recorded in. */
   const rebuild = (next: string[]) => {
     for (const dot of dots) cloud.remove(dot)
     dots = []
     types = next
+    groups = []
+    selected = null
     const counters: Record<string, number> = {}
     next.forEach((type) => {
       const group = groupForType(type)
@@ -103,8 +108,10 @@ export function buildBrain() {
       const [dx, dy, dz] = scatter(seen, 0.17)
       dot.position.set(cx + dx, cy + dy, cz + dz)
       dot.scale.setScalar(0.7)
+      dot.userData.cell = dots.length
       cloud.add(dot)
       dots.push(dot)
+      groups.push(group)
     })
     lit = 0
   }
@@ -119,6 +126,10 @@ export function buildBrain() {
     /** Cells lit above the quiet floor on the last update, for the diagnostic readout. */
     get litCount() {
       return lit
+    },
+    /** The cell the reader picked, or null. Mirrored into diagnostics so panel and scan agree. */
+    get selectedIndex() {
+      return selected
     },
     /**
      * Drive every dot from the measured vector. `types` (the run's cell identities) is only
@@ -136,10 +147,35 @@ export function buildBrain() {
         if (activity > 0.08) bright += 1
         const pulse = 0.65 + 0.35 * Math.sin(time * 3 + index * 0.7)
         const material = dot.material as THREE.MeshBasicMaterial
-        material.opacity = 0.1 + activity * pulse * 0.9
-        dot.scale.setScalar(0.62 + activity * pulse * 0.85)
+        // A silent cell is a fact, not a blank: the picked one keeps a visible ring and a
+        // floor under its brightness so a reader can see which dot the panel is describing.
+        const picked = index === selected
+        material.color.setHex(picked ? 0xfff3cf : COLOURS[groups[index] ?? 'other'])
+        material.opacity = picked
+          ? Math.max(0.45, 0.1 + activity * pulse * 0.9)
+          : 0.1 + activity * pulse * 0.9
+        dot.scale.setScalar(picked ? Math.max(1, 0.62 + activity * pulse * 0.85) : 0.62 + activity * pulse * 0.85)
       })
       lit = bright
+    },
+    /**
+     * Point a camera ray at the scan. Returns the cell under it, or null when the brain is
+     * hidden or the ray misses. Silent cells stay pickable — a cell that never fires is
+     * exactly the fact the inspector exists to state.
+     */
+    pick(raycaster: THREE.Raycaster): { index: number; distance: number } | null {
+      if (!root.visible || dots.length === 0) return null
+      // A pick can arrive between frames (the click is not tied to the render loop), so the
+      // dots' world matrices are brought up to date before the ray is tested.
+      cloud.updateWorldMatrix(true, true)
+      const hits = raycaster.intersectObjects(dots, false)
+      if (!hits.length) return null
+      const index = Number(hits[0].object.userData.cell)
+      return Number.isInteger(index) && index >= 0 ? { index, distance: hits[0].distance } : null
+    },
+    /** Mark one cell as picked, or clear with null. Applied on the next update. */
+    setSelected(index: number | null) {
+      selected = index !== null && index >= 0 && index < dots.length ? index : null
     },
   }
 }

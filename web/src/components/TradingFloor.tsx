@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ArmMeta, ArmSummary, Observation, FlyMood, PopulationDescription } from '../lib/types'
 import { isNeural } from '../lib/types'
 import { compact, signedPct, tone, usd } from '../lib/format'
+import { CellInspector, type CellPick } from './CellInspector'
 import { Desk } from './Desk'
 import { moodFor } from '../lib/mood'
 import type { FloorArmState, FloorHandle, FloorState } from '../three/floor'
@@ -20,6 +21,9 @@ interface TradingFloorProps {
   /** The cells this run's population vectors describe, recorded once per run. */
   population?: PopulationDescription | null
 }
+
+/** Stable identity for "this run recorded no population": an absent block must clear the dots. */
+const NO_CELLS: string[] = []
 
 function webglAvailable(): boolean {
   try {
@@ -89,7 +93,15 @@ export function TradingFloor({
   const [pixel, setPixel] = useState(false)
   const [tradeCam, setTradeCam] = useState(false)
   const [brain, setBrain] = useState(false)
+  const [picked, setPicked] = useState<CellPick | null>(null)
   const [view, setView] = useState<'floor' | 'gordon' | 'warren'>('floor')
+
+  // The panel can pick a cell as well as a dot can (stepping to a quiet cell that draws no
+  // light of its own), and the scan's highlight has to follow either way.
+  const pickCell = useCallback((pick: CellPick) => {
+    setPicked(pick)
+    floorRef.current?.selectBrainCell(pick.armId, pick.cell)
+  }, [])
 
   const observation = observations[index] ?? null
   const mid = seasonBars[index]?.mid ?? 0
@@ -150,7 +162,7 @@ export function TradingFloor({
         neural: entry?.signal ? isNeural(entry.signal) : engine === 'neural',
         brainActivity: isNeural(entry?.signal) ? [entry.signal.left_hz,entry.signal.right_hz,entry.signal.KC_spikes,entry.signal.reward_spikes,entry.signal.gate_spikes,entry.signal.aversive_spikes] : [],
         population: isNeural(entry?.signal) ? entry?.signal.population : undefined,
-        cellTypes: population?.types,
+        cellTypes: population?.types ?? NO_CELLS,
         halted: Boolean(entry?.portfolio.halted),
         trades: events,
         lastFill,
@@ -166,7 +178,7 @@ export function TradingFloor({
       live,
       initialCapital: Number(initialCapital) || 100,
     }
-  }, [arms, summaries, observation, seasonBars.length, index, mid, bars, product, engine, live, initialCapital])
+  }, [arms, summaries, observation, seasonBars.length, index, mid, bars, product, engine, live, initialCapital, population])
 
   useEffect(() => {
     if (!webglAvailable()) {
@@ -184,7 +196,7 @@ export function TradingFloor({
     import('../three/floor')
       .then(({ createFloor }) => {
         if (cancelled) return
-        handle = createFloor(stage)
+        handle = createFloor(stage, { onBrainPick: (armId, cell) => setPicked({ armId, cell }) })
         floorRef.current = handle
         if (stateRef.current) handle.update(stateRef.current)
         // Diagnostics hook: lets a headless check confirm the scene rendered real geometry
@@ -230,7 +242,7 @@ export function TradingFloor({
         <span className="floor-head-chips">
           {!fallback && <>
             {(['floor','gordon','warren'] as const).map(camera => <button key={camera} type="button" className={`chip floor-mode ${view===camera?'is-on':''}`} aria-pressed={view===camera} onClick={()=>{setView(camera);floorRef.current?.setView(camera)}}>{camera==='floor'?'Full floor':camera==='gordon'?'Gordon close-up':'Warren close-up'}</button>)}
-            <button type="button" className={`chip floor-mode ${brain?'is-on':''}`} aria-pressed={brain} onClick={()=>{setBrain(!brain);floorRef.current?.setBrainMode(!brain)}}>◉ Brain scan {brain?'on':'off'}</button>
+            <button type="button" className={`chip floor-mode ${brain?'is-on':''}`} aria-pressed={brain} onClick={()=>{const next=!brain;setBrain(next);floorRef.current?.setBrainMode(next);if(!next)setPicked(null)}}>◉ Brain scan {brain?'on':'off'}</button>
           </>}
           {!fallback && (
             <button
@@ -384,6 +396,15 @@ export function TradingFloor({
           const values=[['Left DNp20',signal.left_hz,'Hz'],['Right DNp20',signal.right_hz,'Hz'],['Kenyon cells',signal.KC_spikes,'spikes'],['Reward DAN',signal.reward_spikes,'spikes'],['Gate DNpe017',signal.gate_spikes,'spikes'],['Aversive DAN',signal.aversive_spikes,'spikes']] as const
           return <div className="brain-stats" key={arm.id}><h3>{arm.name}<span>{signal.total_spikes.toLocaleString()} total spikes</span></h3>{values.map(([name,value,unit],i)=><div className="brain-signal" key={name} style={{'--signal-color':['#64dfff','#64dfff','#c7e8ad','#ffb454','#cc9eff','#ff7793'][i]} as React.CSSProperties}><span>{name}</span><div><i style={{width:`${Math.min(100,Math.log1p(value)/Math.log(101)*100)}%`}}/></div><strong>{value.toLocaleString()} <small>{unit}</small></strong></div>)}<p>{signal.memory.enabled?`${signal.memory.changed_edges?.toLocaleString() ?? 0} memory connections changed`:'Memory connections frozen'} · {signal.seconds}s observation</p></div>
         })}
+        <CellInspector
+          population={population ?? null}
+          engine={engine}
+          arms={arms}
+          observations={observations}
+          index={index}
+          picked={picked}
+          onPick={pickCell}
+        />
       </section>}
 
       <div className="floor-ticker" aria-label="Tape">

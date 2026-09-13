@@ -1,0 +1,67 @@
+/* The cell inspector: group firing on the left, the picked cell's own series on the right. */
+
+.cell-inspector {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(230px, 1fr) 2fr;
+  gap: 30px;
+  padding-top: 24px;
+  border-top: 1px solid #2b3f3f;
+}
+.cell-inspector .panel-title {
+  display: block;
+  font: 10px var(--font-num);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.cell-note { font-size: 11px; line-height: 1.65; margin: 8px 0 0; }
+.cell-group-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; }
+.cell-group-list li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 11px;
+  padding: 5px 8px;
+  background: #ffffff05;
+  border-left: 2px solid #2b3f3f;
+}
+.cell-group-list li.is-lit { border-left-color: #c7e8ad; background: #c7e8ad10; }
+.cell-group-list li.is-quiet { border-left-color: #3a4a4a; }
+.cell-group-name { color: var(--ink-2); }
+.cell-group-total, .cell-group-fired { color: var(--ink-3); }
+.cell-group-list li.is-lit .cell-group-fired { color: #c7e8ad; }
+
+.cell-detail { min-width: 0; }
+.cell-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
+.cell-id { font-size: 13px; color: #c7e8ad; }
+.cell-type { font-size: 13px; color: var(--ink); letter-spacing: -.01em; }
+.cell-arm { margin-left: auto; font-size: 10px; }
+.cell-step { display: inline-flex; gap: 4px; }
+.cell-step button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  line-height: 1;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  background: #ffffff08;
+  color: var(--ink-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+.cell-step button:hover { background: #ffffff14; color: var(--ink); }
+.cell-hint { font-size: 12px; color: var(--ink-3); line-height: 1.7; margin: 14px 0 0; }
+.cell-series { display: block; width: 100%; height: 84px; margin: 14px 0 0; }
+.cell-series-plot { fill: #ffffff06; }
+.cell-series-current { fill: #c7e8ad14; }
+.cell-series-bar { fill: #64dfff; }
+.cell-series-bar.is-quiet { fill: #ffffff22; }
+.cell-series-baseline { stroke: #3a4a4a; stroke-width: 1; }
+.cell-series-point { fill: #fff3cf; }
+.cell-facts { font-size: 11px; color: var(--ink-2); margin: 8px 0 0; }
+
+@media (max-width: 900px) {
+  .cell-inspector { grid-template-columns: 1fr; gap: 20px; }
+}
