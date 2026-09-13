@@ -260,6 +260,95 @@ the script itself is driven end to end against a fake session that crashes once 
 (the fake is what `FLYVSLY_SESSION` is for; it is also how the Docker form is run). The one
 thing the supervisor cannot do for you is notice that a *running* session has stopped trading
 without dying — for that, watch `runs/live-supervisor.session.log` and the browser.
+## Continuing a session instead of writing it off
+
+A kill used to end the experiment. `flyvsly salvage` turned the bars into a recording and the
+next `flyvsly live` started a fresh session under a new run id, so every crash silently began a
+new experiment. `flyvsly live --resume <run id>` continues the session instead, from what the
+killed process left on disk — and it is honest about where each part of a session lives,
+because they do not survive a kill equally:
+
+| what | survives a kill? | where it is |
+| --- | --- | --- |
+| the market window | rebuildable | `live_state.json` (`session_opened`, `bar_seconds`, `warmup_bars`) plus the bars in `observations.jsonl` |
+| the accounts | yes, per bar | each arm's own `gordon.sqlite` / `warren.sqlite` |
+| the brain | only as far as it was checkpointed | `brains/<arm>.npz`, written every `--brain-every` bars (default 60) |
+
+**The market window.** The bars the session traded are read back from `observations.jsonl`
+(`flyvsly/live.py:336`), not fetched again: those mids are the ones the flies decided on, and
+substituting the venue's close for an observed mid would make a resumed decision incomparable
+with the one recorded for the same bar. In front of them goes the newest `warmup_bars` bars the
+venue closed *before* the session's first traded bar; past the end of the venue's page one
+placeholder bar stands in and the season's provenance says so. The window ends at the last
+logged bar and the bar count starts there too (`flyvsly/arena.py:911`), so a bar already in the
+log cannot be offered again — `LiveSeason.advance` also refuses any timestamp the season holds
+(`flyvsly/live.py:192-207`).
+
+**The accounts.** This is the part that survives a kill outright, and it is worth being exact
+about what that means. `Ledger` opens its SQLite file with `CREATE TABLE IF NOT EXISTS` and
+writes the starting cash, positions and anchor **only when the `settings` key is absent**
+(`vendor/stonkfly/ledger.py:14-42`); re-opening a ledger whose settings signature does not
+match is refused rather than adapted (`ledger.py:39-42`). Each bar's money movement is one
+`BEGIN IMMEDIATE` transaction — `settle` writes cash, positions and the order's settlement
+together (`ledger.py:120-166`), and `commit_tick` writes the anchor, checkpoint and tick
+together (`ledger.py:168`). So the claim is: **the account on disk is the account as of the
+last bar that committed, and reopening it does not reset it** — the tick counter is read across
+a kill and a continuation in `tests/test_live_resume.py`.
+
+What that does *not* guarantee is that a bar was completed. A kill inside the order path can
+leave an intent reserved and unfilled: `reserve` refuses to start a second order while one is
+pending (`ledger.py:81-88`), the guard blocks the bar while it is unresolved
+(`vendor/stonkfly/risk.py:24`), and the paper broker's own answer is `reconcile`, which settles
+it from the immutable plan (`broker.py:35-38`). Nothing in the live loop calls it, so a resume
+does not quietly do so either: if any arm's ledger holds an intent for a bar the log never
+recorded, `load_resume` refuses the session (`flyvsly/salvage.py:435`) rather than trading that
+bar twice or accounting for its fill twice. The check reads the arms' own SQLite files
+read-only (`salvage.py:378-408`).
+
+**The brain.** The learned efficacies live in memory and nowhere else, so a session that
+checkpoints nothing has nothing to continue from. A live session therefore writes each fly's
+brain into `<run>/brains/<arm>.npz` every `--brain-every` bars, replacing the previous snapshot
+(the latest state is what a continuation wants, not a history of it), and it writes the
+snapshot *before* the checkpoint that names it (`flyvsly/arena.py:1152-1171`, called at
+`arena.py:964`). A continuation restores the newest snapshot its checkpoint names and records
+which bar that was, how many bars behind the kill it is, and the file's digest — the same
+`weights` provenance block a trained brain is recorded with. When there is no snapshot it
+records that the fly restarted from the baseline graph and why (`arena.py:1045-1113`).
+
+Two things about that restore are deliberate. It uses upstream's `restore`
+(`vendor/stonkfly/neural/brain.py:393`), which verifies the checkpoint's provenance against the
+brain it is loading into (model, build, rule digest, graph digests), and **not** `starting.apply`
+— that function freezes the weights it puts back (`flyvsly/starting.py:179`), which is right for
+an exam and wrong here: it would silently turn the fly whose learning the run is measuring into
+a frozen one. The resumed arm's own `weights_frozen` flag is checked against `learning` for the
+same reason (`arena.py:1093-1100`).
+
+So: **a resumed brain is not the brain that was killed.** It is the newest snapshot the session
+wrote, up to one `--brain-every` cadence old, and the recording states that rather than implying
+otherwise. What no resume can recover is the decision the flies were making when the process
+died, and any learning after the last snapshot; the recording says so in `run.resumed` (once per
+continuation, with the earlier ones nested under `earlier`).
+
+**What is not verified here.** The brain half of this cannot be exercised without the retained
+graph: `data/` is gitignored, so no test in this repository runs the real engine across a kill.
+`tests/test_live_resume.py` drives the restore with a stub backend that saves and restores a
+file, which pins the wiring — which fly is handed which snapshot, that a resumed competition is
+not frozen, and what the recording then says — but not that upstream's `restore` accepts a real
+mid-run snapshot of a live session. That check belongs on the host that has the graph: continue
+a real session with `--resume` and read `run.resumed.brains` in the recording it writes.
+
+```sh
+flyvsly live --resume 20260911-180303-live        # continue, with its own rules and venue
+flyvsly live --brain-every 60                     # a new session that can be continued
+```
+
+A continuation takes its rules, engine, product, venue, warm-up and run id from the checkpoint
+it is continuing (`flyvsly/server.py:278-321`): a request to continue an experiment may not
+change it. Two requests are refused before anything starts, with the reason returned to the API
+caller and put in the hub's state (`server.py:200-262`): a run id that does not exist, and one
+that already has a `recording.json`. The second is the important one — a recording is evidence
+of an experiment that is over, and the session documented above is exactly that case: it was
+salvaged, so `--resume` refuses it. Continuing it would rewrite the record of a finished run.
 
 ## Where every number comes from
 

@@ -22,6 +22,7 @@ Paper only, and no credentials of any kind: this reads the same public endpoint
 
 import dataclasses
 import time
+from decimal import Decimal
 
 from .market import Season, _candles, _iso, kraken_candles
 
@@ -70,6 +71,38 @@ STALE_WINDOW_BARS = 5
 
 # The public endpoint returns at most 300 buckets per request.
 PAGE_ROWS = 300
+
+# What a live session is taken to have run when its own checkpoint does not say. A checkpoint
+# written by an older build recorded the window and nothing else, and both readers of one — a
+# salvage, which finishes it, and a resume, which continues it — have to rebuild the session
+# rather than refuse it. Read as a guess: both report that the metadata was rebuilt.
+LIVE_DEFAULTS = {
+    "engine": "neural",
+    "kind": "competition",
+    "product": "BTC-USDC",
+    "venue": "kraken",
+    "bar_seconds": 60,
+    "warmup_bars": 120,
+}
+
+
+def observed_bars(observations) -> list[tuple[int, float]]:
+    """The ``(timestamp, mid)`` of every bar a session traded, from its own log, oldest first.
+
+    The one reading of an observation's price, shared by a rebuilt recording and by a
+    continuation so the two cannot disagree about what the session saw. The mid is what the
+    flies' quotes were built around; a log old enough to carry only the book falls back to the
+    bid/ask it does have.
+    """
+    bars = []
+    for observation in observations:
+        market = observation.get("market") or {}
+        mid = market.get("mid")
+        if mid is None:
+            bid, ask = Decimal(str(market.get("bid", 0))), Decimal(str(market.get("ask", 0)))
+            mid = float((bid + ask) / 2)
+        bars.append((int(observation["t"]), float(mid)))
+    return bars
 
 
 def completed(rows, bar_seconds: int, now: float) -> list[tuple[int, float]]:
@@ -276,18 +309,7 @@ class CandleFeed:
                 f"the exchange returned {len(bars)} completed {self.spec.product} bars, "
                 f"but this session needs {self.warmup_bars} of warm-up"
             )
-        newest, _ = bars[-1]
-        stale = now - (newest + self.spec.bar_seconds)
-        if stale > STALE_WINDOW_BARS * self.spec.bar_seconds:
-            # The message carries the whole diagnosis — the venue, the product, the newest bar
-            # it did close and how stale that is — because the operator's next step is there.
-            raise RuntimeError(
-                f"{self.venue} is not trading {self.spec.product}: the newest completed bar is "
-                f"{_iso(newest)} and it ended {stale:.0f} s ago, more than the "
-                f"{STALE_WINDOW_BARS} bars ({STALE_WINDOW_BARS * self.spec.bar_seconds} s) this "
-                f"session will accept. Check that {self.venue} still lists "
-                f"{self.spec.product}, or point the session at a venue that trades it."
-            )
+        self._refuse_a_venue_that_stopped(bars, now)
         window = bars[-self.warmup_bars :]
         self.season = LiveSeason(
             self.spec,
@@ -310,6 +332,99 @@ class CandleFeed:
         self.last_poll = self.clock()
         self.polls = 1
         return self.season
+
+    def resume(self, observations) -> LiveSeason:
+        """Continue a session from the bars it already traded, rather than starting over.
+
+        A killed session did not write down the chart it was shown, so the window is rebuilt
+        from the two things that did survive: the bars in its own log, and the bars the venue
+        has closed — the newest ``warmup_bars`` of them that ended before the session's first
+        traded bar, which is the warm-up it was primed with. Where the two could disagree the
+        log wins, because those mids are the ones the flies actually decided on: substituting
+        the venue's close for an observed mid would make a resumed decision incomparable with
+        the one recorded for the same bar.
+
+        The window ends at the last bar in the log, so nothing already traded can be traded
+        again: ``advance`` refuses a timestamp the season holds, and the caller counts its bars
+        from the log rather than from zero. Every bar the venue has closed since is new, and is
+        traded in market order like any other backlog — including bars that closed while the
+        session was down and the venue still has. A gap the venue can no longer reach (Kraken
+        keeps a page of history, not a memory) stays a gap: the recording's bar list is the
+        truth about which bars this session traded, and it is not backfilled with bars nobody
+        could have seen.
+        """
+        if self.season is not None:
+            raise RuntimeError("this feed already has a season; resume() needs a fresh feed")
+        rows = self.fetch()
+        now = self.clock()
+        closed = completed(rows, self.spec.bar_seconds, now)
+        self._refuse_a_venue_that_stopped(closed, now)
+        observed = observed_bars(observations)
+        first = observed[0][0] if observed else None
+        # `first` is None only for a session killed before its first bar, and then the whole
+        # page is the warm-up it never got to trade behind.
+        earlier = [bar for bar in closed if first is None or bar[0] < first]
+        prefix = earlier[-self.warmup_bars :]
+        if prefix:
+            warmup = (
+                f"the {len(prefix)} bars {self.venue} closed before this session's first "
+                "traded bar, rebuilt from the venue's own history"
+            )
+        else:
+            # Older than the venue's page of history. The mid is real and the timestamp is one
+            # bar before the session's first traded bar; the provenance says so rather than
+            # leaving a reader to work out where the fly's chart came from.
+            prefix = [(first - self.spec.bar_seconds, observed[0][1])]
+            warmup = (
+                f"one placeholder bar stands in for the warm-up: {self.venue}'s history no "
+                "longer reaches back to before this session's first traded bar"
+            )
+        self.season = LiveSeason(
+            self.spec,
+            [close for _, close in prefix] + [close for _, close in observed],
+            [opened for opened, _ in prefix] + [opened for opened, _ in observed],
+            {
+                "source": f"{self.venue}-public-candles",
+                "venue": self.venue,
+                "mode": "live",
+                "product": self.spec.product,
+                "bar_seconds": self.spec.bar_seconds,
+                "warmup_bars": len(prefix),
+                "resumed_at": int(now),
+                "resumed_bars": len(observed),
+                "warmup": warmup,
+                "disclaimer": "Live public candles. Paper execution only; no order is placed.",
+            },
+            len(prefix),
+        )
+        self.last_poll = now
+        self.polls += 1
+        return self.season
+
+    def _refuse_a_venue_that_stopped(self, bars, now) -> None:
+        """Refuse a venue that has stopped closing bars, rather than trade a dead market.
+
+        Shared by a session that is starting and one that is continuing: both are about to
+        decide on the next bar this venue closes, and a venue that has stopped closing them
+        looks exactly like a quiet market until the recording is read months later.
+        """
+        if not bars:
+            raise RuntimeError(
+                f"{self.venue} returned no completed {self.spec.product} bars; there is no "
+                "market to decide on"
+            )
+        newest, _ = bars[-1]
+        stale = now - (newest + self.spec.bar_seconds)
+        if stale > STALE_WINDOW_BARS * self.spec.bar_seconds:
+            # The message carries the whole diagnosis — the venue, the product, the newest bar
+            # it did close and how stale that is — because the operator's next step is there.
+            raise RuntimeError(
+                f"{self.venue} is not trading {self.spec.product}: the newest completed bar is "
+                f"{_iso(newest)} and it ended {stale:.0f} s ago, more than the "
+                f"{STALE_WINDOW_BARS} bars ({STALE_WINDOW_BARS * self.spec.bar_seconds} s) this "
+                f"session will accept. Check that {self.venue} still lists "
+                f"{self.spec.product}, or point the session at a venue that trades it."
+            )
 
     def poll(self) -> int:
         """Append every bar completed since the last poll. Returns the number appended."""

@@ -202,16 +202,64 @@ class RunHub:
 
         The session ends when `stop_live()` is called, on Ctrl-C, or when the stop file
         appears — never in the middle of a bar.
+
+        A request to *continue* a killed session (`options["resume"]` holds its run id) is
+        answered here rather than in the thread, because the two ways it can be refused are
+        both knowable before anything starts: the session is not there, or it already has a
+        recording. Either way the caller gets the reason back, and the hub reads as a failed
+        session rather than as one that silently began a fresh experiment under the old id.
         """
+        resume = str(options.get("resume") or "")
+        refusal = self._refuse_resume(resume) if resume else None
         with self.lock:
             if self.thread and self.thread.is_alive():
                 return {"started": False, "reason": "A run is already in progress."}
-            self.state = {"status": "starting", "options": options, "live": True}
-            self.thread = threading.Thread(
-                target=self._live_worker, args=(options,), daemon=True, name="live-session"
-            )
-            self.thread.start()
+            if refusal:
+                self.session = {"bars": []}
+                self.state = {"status": "failed", "error": refusal, "resume": resume}
+            else:
+                self.state = {"status": "starting", "options": options, "live": True}
+                self.thread = threading.Thread(
+                    target=self._live_worker, args=(options,), daemon=True, name="live-session"
+                )
+                self.thread.start()
+        if refusal:
+            self.broadcast("run_failed", dict(self.state))
+            return {"started": False, "reason": refusal, "error": refusal}
         return {"started": True, "options": options}
+
+    def _refuse_resume(self, run_id: str) -> str | None:
+        """Why a live session cannot be continued, or None if it can.
+
+        Read from the artifacts rather than from memory, so the answer is the same for a session
+        this hub never ran — and a session killed before this process started is exactly the one
+        someone wants back.
+        """
+        if "/" in run_id or "\\" in run_id or run_id in ("", ".", ".."):
+            return f"{run_id!r} is not a run id."
+        run = self.runs / run_id
+        if not (run / "live_state.json").exists():
+            resumable = sorted(
+                path.parent.name
+                for path in self.runs.glob("*/live_state.json")
+                if not (path.parent / "recording.json").exists()
+            )
+            return (
+                f"There is no live session {run_id!r} to continue under {self.runs}: it has no "
+                "live_state.json. "
+                + (
+                    f"Killed sessions left behind here: {', '.join(resumable)}."
+                    if resumable
+                    else "No session here was left without a recording."
+                )
+            )
+        if (run / "recording.json").exists():
+            return (
+                f"{run_id} already has a recording.json: it finished, or it was salvaged. A "
+                "continuation would rewrite a closed session's record from artifacts it can no "
+                "longer be sure of. Start a new session instead."
+            )
+        return None
 
     def stop_live(self) -> dict:
         """Ask a live session to stop after the bar it is deciding."""
@@ -225,36 +273,53 @@ class RunHub:
         try:
             from .arena import Arena
             from .live import CandleFeed
+            from .salvage import load_resume
 
-            rules = ArenaRules(
-                capital=options.get("capital", "100"),
-                order_limit=options.get("order_limit", "10"),
-                daily_orders=int(options.get("daily_orders", 24)),
-                require_gate=bool(options.get("require_gate", True)),
-                reinforcement=str(options.get("reinforcement", "pnl")),
-                neural_ms=float(options.get("neural_ms", 500)),
-                decoder_threshold_hz=float(options.get("decoder_threshold_hz", 2)),
-            ).validate()
+            # A continuation is the session it continues, so the checkpoint decides what it is:
+            # its rules, its machine, the market it trades and the bar it was counting. Letting
+            # the request override any of that would turn "continue this experiment" into
+            # "start a different one under its name", which is the failure this is here to stop.
+            resume = load_resume(self.runs / str(options["resume"])) if options.get("resume") else None
+            if resume is not None and resume.rules:
+                rules = ArenaRules(**resume.rules).validate()
+            else:
+                rules = ArenaRules(
+                    capital=options.get("capital", "100"),
+                    order_limit=options.get("order_limit", "10"),
+                    daily_orders=int(options.get("daily_orders", 24)),
+                    require_gate=bool(options.get("require_gate", True)),
+                    reinforcement=str(options.get("reinforcement", "pnl")),
+                    neural_ms=float(options.get("neural_ms", 500)),
+                    decoder_threshold_hz=float(options.get("decoder_threshold_hz", 2)),
+                ).validate()
             spec = MarketSpec(
                 kind="coinbase",
-                product=str(options.get("product", "BTC-USDC")),
+                product=resume.product if resume else str(options.get("product", "BTC-USDC")),
                 bars=int(options.get("bars", 48)),
-                bar_seconds=int(options.get("bar_seconds", 60)),
+                bar_seconds=(
+                    resume.bar_seconds if resume else int(options.get("bar_seconds", 60))
+                ),
             )
-            label = options.get("label") or "live session"
+            label = (resume.label if resume else None) or options.get("label") or "live session"
             config = ArenaConfig(
-                rules=rules, market=spec, engine=options.get("engine", "neural"),
-                label=label, out=self.runs,
+                rules=rules,
+                market=spec,
+                engine=resume.engine if resume else options.get("engine", "neural"),
+                label=label,
+                out=self.runs,
+                kind=resume.kind if resume else "competition",
             )
-            warmup = int(options.get("warmup", 120))
+            warmup = resume.warmup_bars if resume else int(options.get("warmup", 120))
             feed = CandleFeed(
                 spec,
                 warmup_bars=warmup,
                 poll_seconds=float(options.get("poll_seconds", 15)),
-                venue=str(options.get("source", "kraken")),
+                venue=resume.venue if resume else str(options.get("source", "kraken")),
             )
             arena = Arena(config, on_event=self._event, data_root=self.data)
-            run_id = time.strftime("%Y%m%d-%H%M%S") + "-live"
+            run_id = (
+                resume.run_id if resume else time.strftime("%Y%m%d-%H%M%S") + "-live"
+            )
             self.state = {"status": "running", "run_id": run_id, "live": True}
             self.broadcast(
                 "run_starting",
@@ -272,6 +337,17 @@ class RunHub:
                     "product": spec.product,
                     "market_kind": spec.kind,
                     "live": True,
+                    # Stated on the wire as well as on the recording: a page that joins a
+                    # continued session should not present it as a session that just began.
+                    "resumed": (
+                        {
+                            "from_bar": resume.bars_traded,
+                            "session_opened": resume.session_opened,
+                            "killed_status": resume.checkpoint.get("status"),
+                        }
+                        if resume
+                        else None
+                    ),
                     "options": {
                         "capital": str(rules.capital),
                         "order_limit": str(rules.order_limit),
@@ -290,6 +366,8 @@ class RunHub:
                 run_id=run_id,
                 out_root=self.runs,
                 stop=lambda: self.state.get("status") == "stopping",
+                resume=resume,
+                brain_every=int(options.get("brain_every", 0)),
             )
             self.clear_session()
             self.state = {

@@ -324,6 +324,73 @@ def _slim_signal(signal):
     return {k: v for k, v in signal.items() if k != "cell_ids"}
 
 
+def _trade_from_observation(observation, record) -> dict:
+    """The trade an observation describes, in the shape `_bar` appends as it fills.
+
+    Read back from the log rather than rebuilt from the ledger: the log is what the session
+    recorded at the time, so a continuation's trade list says the same thing for a bar it
+    adopted as for one it decided itself.
+    """
+    fill = ((record.get("execution") or {}).get("fill")) or {}
+    steps = ((record.get("decision") or {}).get("explanation") or {}).get("steps") or []
+    return {
+        "i": observation["i"],
+        "t": observation["t"],
+        "side": (record.get("decision") or {}).get("side"),
+        "product": observation.get("product"),
+        "base_size": fill.get("base"),
+        "price": fill.get("price"),
+        "quote_size": fill.get("quote"),
+        "fee": fill.get("fee"),
+        "reason": steps[-1] if steps else (record.get("execution") or {}).get("reason"),
+        "equity_after": (record.get("portfolio") or {}).get("equity"),
+        "memory_changed_edges": ((record.get("signal") or {}).get("memory") or {}).get(
+            "changed_edges"
+        ),
+    }
+
+
+def _adopt(arm, observations) -> None:
+    """Give an arm the bars a killed session already traded for it.
+
+    Needs no access to the ledgers — it is the log that says what those bars did to each
+    account — and it is what keeps a continued run's recording one session rather than a tail:
+    the curve starts where the session started, the fills and fees are the session's own, and
+    the bars traded after the resume are appended to theirs.
+    """
+    product = arm.rules.products[0]
+    arm.curve = []
+    arm.trades = []
+    blocked = 0
+    exposure = 0
+    last_portfolio: dict = {}
+    for observation in observations:
+        record = (observation.get("arms") or {}).get(arm.id) or {}
+        portfolio = record.get("portfolio") or {}
+        arm.curve.append(float(portfolio.get("equity", arm.initial)))
+        if ((record.get("decision") or {}).get("side")) == "BLOCKED":
+            blocked += 1
+        if Decimal(str(portfolio.get("positions", {}).get(product, 0) or 0)) > 0:
+            exposure += 1
+        if (record.get("execution") or {}).get("fill"):
+            arm.trades.append(_trade_from_observation(observation, record))
+        memory = (record.get("signal") or {}).get("memory")
+        if memory:
+            arm.last_memory = memory
+        last_portfolio = portfolio or last_portfolio
+    arm.stats["fills"] = int(last_portfolio.get("fills", 0) or 0)
+    arm.stats["vetoes"] = int(last_portfolio.get("vetoes", 0) or 0)
+    arm.stats["fees_paid"] = Decimal(str(last_portfolio.get("fees_paid", "0") or "0"))
+    arm.stats["blocked"] = blocked
+    arm.stats["exposure_bars"] = exposure
+    arm.stats["halted_reason"] = last_portfolio.get("halted")
+
+
+# Where a live session checkpoints each fly's brain, inside its own run directory. A session
+# that never writes one has nothing to continue from: the learned efficacies live in memory.
+BRAIN_DIR = "brains"
+
+
 class Arena:
     def __init__(self, config: ArenaConfig, on_event=None, data_root="data"):
         self.config = config.validate()
@@ -722,6 +789,9 @@ class Arena:
 
     def _begin_bar_loop(self):
         self.observations = []
+        # How many of them are already in `observations.jsonl`. Zero for a session that starts
+        # now; a continuation adopts its log and continues writing after it.
+        self._observations_logged = 0
         self.seconds_per_bar_mean = 0.0
         self.truncated = False
         self.inputs_identical = True
@@ -747,7 +817,7 @@ class Arena:
         self._finish_bar_loop(times)
         return arms
 
-    def run_live(self, feed, run_id=None, out_root=None, stop=None) -> dict:
+    def run_live(self, feed, run_id=None, out_root=None, stop=None, resume=None, brain_every=0) -> dict:
         """Trade a growing season on the wall clock: one decision per completed bar.
 
         The exchange's clock decides when a bar exists — the loop waits for the feed to close
@@ -757,9 +827,20 @@ class Arena:
 
         ``stop`` is polled between bars, so Ctrl-C or a stop file ends the session between two
         decisions rather than in the middle of one.
+
+        ``resume`` continues a session that was killed, from the artifacts it left behind (see
+        `flyvsly.salvage.load_resume`): the same run directory, the bars it had already traded
+        read back rather than traded again, and each arm's account reopened rather than created.
+        ``brain_every`` checkpoints each fly's brain into ``brains/`` every N bars — the learned
+        efficacies never reach the disk on their own, so that snapshot is the only brain a
+        continuation has to put back, and `resumed` in the recording says which bar it is from.
         """
         config = self.config
         started = time.time()
+        if resume is not None:
+            # A continuation *is* the session it continues, so it writes to the session's own
+            # directory: the recording it ends with covers the whole run, not the tail of it.
+            run_id = resume.run_id
         run_id = run_id or time.strftime("%Y%m%d-%H%M%S", time.localtime(started))
         out = Path(out_root or config.out) / run_id
         out.mkdir(parents=True, exist_ok=True)
@@ -776,10 +857,21 @@ class Arena:
                 "which a live session does not have yet. Use 'pnl' or 'none'."
             )
 
-        season = self.season = feed.prime()
-        # Read once, at the start: `next_bar_opened` is a property of the growing window, so
-        # reading it later would report the last bar's successor as the session's start.
-        session_opened = season.next_bar_opened
+        if resume is None:
+            season = self.season = feed.prime()
+            # Read once, at the start: `next_bar_opened` is a property of the growing window, so
+            # reading it later would report the last bar's successor as the session's start.
+            session_opened = season.next_bar_opened
+            prior: list = []
+        else:
+            # The session's polls continue rather than restarting, so `polls` counts for the
+            # whole session; this look at the venue is the continuation's first.
+            feed.polls = max(0, int(resume.checkpoint.get("polls") or 0))
+            season = self.season = feed.resume(resume.observations)
+            # The session's own start, not this process's: a continuation of a session opened
+            # three days ago is still that session, and a reader dates it from where it began.
+            session_opened = resume.session_opened
+            prior = list(resume.observations)
         stop = stop or (lambda: False)
         self.emit(
             "season_ready",
@@ -788,7 +880,7 @@ class Arena:
             bars=[],
             live=True,
             warmup=season.warmup_bars,
-            next_bar_opened=session_opened,
+            next_bar_opened=session_opened if resume is None else season.next_bar_opened,
         )
 
         on_settings = arm_settings(self.rules, self.personas[0]["learning"])
@@ -800,11 +892,23 @@ class Arena:
             assert_only_learning_differs(
                 arm_settings(self.rules, True), arm_settings(self.rules, False)
             )
+        if resume is not None and resume.starting_conditions:
+            # The run's own starting line, from its checkpoint: a continuation does not change
+            # the experiment. What it does change is the brain each fly restarts with, and that
+            # is stated separately, per arm, in `resumed`.
+            conditions = resume.starting_conditions
 
         arms, threads = self._open_arms(out)
         self._begin_bar_loop()
+        brains: dict = {}
+        if resume is not None:
+            for arm in arms:
+                _adopt(arm, prior)
+            self.observations = list(prior)
+            self._observations_logged = len(prior)
+            brains = self._restore_resume_brains(arms, resume)
         times = []
-        processed = 0
+        processed = len(prior)
         lag = 0.0
         # Described once and reused: a killed session leaves nothing in memory, so the
         # checkpoint has to carry enough for `flyvsly salvage` to rebuild a recording from it.
@@ -820,7 +924,26 @@ class Arena:
                 if hasattr(arms[0].backend, "population_description")
                 else None
             ),
+            # What a restart can and cannot pick up, stated rather than implied. The brain line
+            # is the one that matters: everything else here survives on its own.
+            "on_restart": {
+                "market": (
+                    "the window is rebuilt from the bars in observations.jsonl, in front of "
+                    "whatever warm-up the venue still has"
+                ),
+                "accounts": "durable: each arm writes its own SQLite ledger per bar",
+                "brain": (
+                    f"checkpointed to {BRAIN_DIR}/ every {int(brain_every)} bars; a continuation "
+                    "restores the newest snapshot and records which bar it came from"
+                    if brain_every
+                    else "not checkpointed (--brain-every 0): a continuation cannot put back "
+                    "what was learned, and records that it did not"
+                ),
+                "how": "flyvsly live --resume <run id>",
+            },
         }
+        if resume is not None:
+            live_meta["resumed"] = self._resume_block(season, resume, brains, prior)
         # A session states itself from the first moment, before it has traded anything: an
         # interrupted session must be visible as a session, not as an empty directory.
         self._checkpoint_live(out, season, feed, session_opened, lag, processed, live_meta)
@@ -836,6 +959,10 @@ class Arena:
                     bar_started = time.perf_counter()
                     self._step(arms, threads, processed, times, bar_started)
                     processed += 1
+                    # Before the checkpoint that names it, so a checkpoint never points at a
+                    # snapshot that is not there yet.
+                    if brain_every and processed % int(brain_every) == 0:
+                        self._checkpoint_brains(arms, season, processed, live_meta)
                     # Lag is measured on the clock the session itself polls with, so it means
                     # "how far behind the exchange is this decision" rather than "how far from
                     # this process's wall clock".
@@ -866,6 +993,32 @@ class Arena:
             del season.closes[season.warmup_bars + processed :]
             del season.times[season.warmup_bars + processed :]
             season._rebuild()
+        if resume is None:
+            wall_mode = (
+                "live: one decision per completed market bar, paced by the exchange's clock. "
+                "Bars that closed while a decision was still running are traded in market "
+                "order, so the session can run behind wall time but never ahead of it."
+            )
+        else:
+            wall_mode = (
+                f"live, continued: this session was killed after {len(prior)} bars and resumed "
+                "from its own checkpoint. The bars it had already traded are read back from its "
+                "log rather than traded again, the curves cover the whole session, and "
+                "`resumed` states which brain each fly restarted with."
+            )
+        extra = {
+            "live": {
+                "product": season.spec.product,
+                "bar_seconds": season.spec.bar_seconds,
+                "warmup_bars": season.warmup_bars,
+                "session_opened": session_opened,
+                "bars_traded": len(self.observations),
+                "lag_seconds_at_end": lag,
+                "polls": feed.polls,
+            }
+        }
+        if resume is not None:
+            extra["resumed"] = live_meta["resumed"]
         recording = self._finalise(
             run_id=run_id,
             season=season,
@@ -875,22 +1028,8 @@ class Arena:
             overlap=None,
             conditions=conditions,
             out=out,
-            wall_mode=(
-                "live: one decision per completed market bar, paced by the exchange's clock. "
-                "Bars that closed while a decision was still running are traded in market "
-                "order, so the session can run behind wall time but never ahead of it."
-            ),
-            extra={
-                "live": {
-                    "product": season.spec.product,
-                    "bar_seconds": season.spec.bar_seconds,
-                    "warmup_bars": season.warmup_bars,
-                    "session_opened": session_opened,
-                    "bars_traded": len(self.observations),
-                    "lag_seconds_at_end": lag,
-                    "polls": feed.polls,
-                }
-            },
+            wall_mode=wall_mode,
+            extra=extra,
         )
         # The checkpoint is the live view of the same session; it stops saying "running" only
         # once the recording it belongs to is on disk.
@@ -903,6 +1042,134 @@ class Arena:
             write_recording(checkpoint, state)
         return recording
 
+    def _restore_resume_brains(self, arms, resume) -> dict:
+        """Put each fly's brain back where the killed session left it, and record where that was.
+
+        The learned efficacies never reached the disk on their own: the only brain a killed
+        session has is what it checkpointed into ``brains/``, which is at most one cadence
+        behind the bar it died on. So this restores the newest snapshot its checkpoint names and
+        records which bar that came from — and when there is none, it records that the arm
+        restarted from the baseline graph rather than letting a reader assume otherwise. A
+        restored brain is not the brain that was killed, and nothing here says it is.
+        """
+        report: dict = {}
+        for arm in arms:
+            snapshot = (resume.brains or {}).get(arm.id) or {}
+            weights = snapshot.get("weights")
+            if snapshot.get("missing"):
+                report[arm.id] = {
+                    "mode": "baseline",
+                    "reason": (
+                        f"the checkpoint names {snapshot['missing']} as this fly's brain, and "
+                        "it is not in the run directory"
+                    ),
+                }
+                continue
+            if weights is None:
+                report[arm.id] = {
+                    "mode": "baseline",
+                    "reason": (
+                        "no brain snapshot was written before the kill, so the efficacies this "
+                        "fly had learned were in memory and are gone"
+                        if arm.learning
+                        else "this fly is frozen at the baseline graph by design, so there was "
+                        "nothing to lose"
+                    ),
+                }
+                continue
+            controller = getattr(arm.backend, "controller", None)
+            if controller is None:
+                report[arm.id] = {
+                    "mode": "baseline",
+                    "reason": (
+                        f"the {arm.backend.engine} engine keeps no learned state, so there is "
+                        "nothing a brain checkpoint could restore"
+                    ),
+                }
+                continue
+            # `restore`, not `starting.apply`: an exam freezes the brain it hands a fly, and a
+            # resumed competition must keep learning. The checkpoint carries the flag the arm
+            # flew with, and a disagreement here would silently freeze one arm of the run.
+            controller.restore(weights["file"])
+            frozen = bool(getattr(controller.brain, "weights_frozen", not arm.learning))
+            if frozen != (not arm.learning):
+                raise RuntimeError(
+                    f"{arm.id}'s brain snapshot ({weights['label']}) carries "
+                    f"weights_frozen={frozen}, which is the wrong flag for an arm with "
+                    f"learning={arm.learning}. Restoring it would change what this run "
+                    "measures, so it is refused rather than quietly applied."
+                )
+            bar = snapshot.get("bar")
+            report[arm.id] = {
+                "mode": "checkpoint",
+                "file": weights["file"],
+                "label": weights["label"],
+                "sha256": weights["sha256"],
+                "bar": bar,
+                "t": snapshot.get("t"),
+                "behind_bars": (
+                    len(resume.observations) - int(bar) if bar is not None else None
+                ),
+            }
+        return report
+
+    def _resume_block(self, season, resume, brains, prior) -> dict:
+        """What the recording says about a session that was continued rather than started.
+
+        A reader has to be able to tell a continued run from one that never died, and to see
+        the parts of it that are not what they would have been: the brain each fly restarted
+        with, and the market window the fly's chart was rebuilt from. The earlier continuations
+        ride along, so a run that was killed twice says so twice.
+        """
+        return {
+            "run_id": resume.run_id,
+            "continued_from_bar": len(prior),
+            "continued_from_t": int(prior[-1]["t"]) if prior else None,
+            "session_opened": resume.session_opened,
+            "killed_at": {
+                "status": resume.checkpoint.get("status"),
+                "bars_traded": resume.checkpoint.get("bars_traded"),
+                "last_bar": resume.checkpoint.get("last_bar"),
+            },
+            "market": (
+                f"the {len(prior)} bars this session had already traded, read back from "
+                "observations.jsonl rather than fetched again"
+            ),
+            "warmup": season.provenance.get("warmup"),
+            "accounts": (
+                "each arm's SQLite ledger was reopened, not created: cash, positions, anchor "
+                "and the order history carry over from the killed session"
+            ),
+            "brains": brains,
+            "dropped_partial_line": bool(resume.dropped_tail),
+            "not_recovered": (
+                "the decision the flies were making when the process died, and any learning "
+                "after the last brain snapshot: neither was ever written down"
+            ),
+            "earlier": resume.checkpoint.get("resumed"),
+        }
+
+    def _checkpoint_brains(self, arms, season, processed, meta) -> None:
+        """Snapshot each fly's brain, so a session that dies can be continued with it.
+
+        Each snapshot replaces the previous one — what a continuation wants is the latest state,
+        not a history of it — and it is written before the checkpoint that names it, so a
+        checkpoint never points at a file that is not there yet. An engine that saves nothing
+        (the procedural stand-in) is not reported as having a brain on disk.
+        """
+        saved = {}
+        for arm in arms:
+            path = self.out_dir / BRAIN_DIR / f"{arm.id}.npz"
+            arm.backend.save(path)
+            if path.is_file():
+                saved[arm.id] = {
+                    "file": f"{BRAIN_DIR}/{path.name}",
+                    "bar": int(processed),
+                    "t": int(season.timestamp(processed - 1)),
+                }
+        if saved:
+            meta.setdefault("brains", {}).update(saved)
+
     def _checkpoint_live(self, out, season, feed, session_opened, lag, processed, meta):
         """Make the session's own record durable as it trades.
 
@@ -910,10 +1177,15 @@ class Arena:
         ledger is already durable bar by bar; this appends the observation and rewrites a small
         state file, so a session that never reached its last bar still reads as the session it
         was. The final artifacts are rewritten whole by `_finalise`.
+
+        One `processed` bar means one observation to append — except on the first checkpoint of
+        a continuation, which owns no new bar and must not write a second copy of the last bar
+        the log already holds.
         """
-        if self.observations:
+        if len(self.observations) > self._observations_logged:
             with (out / "observations.jsonl").open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(self.observations[-1], default=str) + "\n")
+            self._observations_logged = len(self.observations)
         write_recording(
             out / "live_state.json",
             {
@@ -921,6 +1193,7 @@ class Arena:
                 "run_id": out.name,
                 "status": "running",
                 "product": season.spec.product,
+                "venue": feed.venue,
                 "bar_seconds": season.spec.bar_seconds,
                 "warmup_bars": season.warmup_bars,
                 "session_opened": session_opened,
@@ -929,12 +1202,6 @@ class Arena:
                 "lag_seconds": lag,
                 "polls": feed.polls,
                 **meta,
-                # What a restart can and cannot pick up, stated rather than implied.
-                "on_restart": {
-                    "market": "the window is rebuilt from the public candles for these bars",
-                    "accounts": "durable: each arm writes its own SQLite ledger per bar",
-                    "brain": "in memory only: learned efficacies are saved by --save-brains",
-                },
             },
         )
 
