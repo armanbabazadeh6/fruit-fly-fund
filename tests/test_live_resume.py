@@ -569,6 +569,39 @@ def test_a_session_that_is_not_there_is_not_resumed(tmp_path):
         load_resume(tmp_path / "nowhere")
 
 
+def test_a_session_killed_before_its_first_bar_can_be_continued(tmp_path):
+    """The commonest kill of all: the process died before the exchange closed a bar for it.
+
+    Nothing is in the log to adopt, so the whole page the venue still has is the warm-up the
+    killed session never traded behind, and the continuation starts counting from the session's
+    own start rather than from a fresh one — with no bar of the old log to accidentally repeat.
+    """
+    run = write_killed(tmp_path, "live-never-traded", [])
+    resume = load_resume(run)
+    assert resume.bars_traded == 0
+    assert resume.session_opened == EPOCH
+    assert resume.observations == ()
+
+    clock = Clock(EPOCH)
+    exchange = Exchange(clock, EPOCH - 3 * BAR)
+    arena = resume_arena(tmp_path)
+    recording = arena.run_live(
+        live_feed(clock, EPOCH - 3 * BAR, exchange=exchange),
+        run_id=resume.run_id,
+        out_root=tmp_path,
+        resume=resume,
+        stop=lambda: len(arena.observations) >= 2,
+    )
+
+    continued = recording["run"]["resumed"]
+    assert continued["continued_from_bar"] == 0
+    assert continued["continued_from_t"] is None
+    assert recording["run"]["live"]["session_opened"] == EPOCH
+    assert [o["i"] for o in recording["observations"]] == [0, 1]
+    assert [o["t"] for o in recording["observations"]] == [EPOCH, EPOCH + BAR]
+    assert len(recording["summary"]["arms"]["gordon"]["curve"]) == 2
+
+
 def test_a_session_that_says_it_stopped_is_not_resumed(tmp_path):
     """The checkpoint is the session's own statement about itself, and it is read as one.
 
