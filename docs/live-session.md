@@ -80,6 +80,79 @@ Both flies also sat in the market almost without pause: a position on 428 of 429
 (`exposure_bars` 428, `deployment.holding_fraction` 0.9977), with 184 and 81 vetoes and no
 blocked bars on either arm. Churn on a flat, drifting-down path is close to pure cost.
 
+## Reading more than one session
+
+One session is a shape. The point of running live for days is to accumulate several, and
+`flyvsly live-report` is the reading for that:
+
+```sh
+flyvsly live-report                      # one table per comparable group, human-readable
+flyvsly live-report --json               # the same aggregate as JSON
+flyvsly live-report --table --write results/live-report.md   # markdown, for committing
+```
+
+It reads every run under `--runs` whose manifest carries a `run.live` block — the marker
+`flyvsly live` writes and `flyvsly salvage` preserves — and puts one row per session: bars
+traded, the market span those bars cover, how the session ended, both arms' returns, both
+arms' fill counts and fees, and the same buy & hold benchmark the single session reports.
+Then one pooled line per group: the mean paired difference (memory on − memory off), how many
+sessions each arm won, and the fee bill per arm and in total. Every number is read from the
+session's own `summary`; the paired difference is the difference of the two arms'
+`return_pct`, never re-derived from an equity curve, because a salvaged curve was rebuilt from
+an observation log and can disagree with the accounts.
+
+**It refuses to pool things that cannot be compared.** Sessions are averaged together only
+when they ran the same product, bar length, engine, run kind and rule set (`run.rules`).
+Anything else is reported as a separate group, and the report names the field that separated
+them — `2 session(s) fall into 2 groups and are not pooled across them: bar lengths (60s,
+300s)`. For the same reason a session with no recorded product, bar length or rule set, or one
+that traded no bars, is listed as excluded with its reason instead of being folded in.
+
+**It refuses to call a kill a finish line.** A session stopped on purpose reads `stopped`; one
+the host killed, that `flyvsly salvage` rebuilt, reads `salvaged`, and the reading note that
+travels with the table says a salvaged session's last bar is not a finish line. A stop that
+landed inside a backlog drain reads `stopped · short`: the session stopped on purpose but the
+bars the exchange closed after its last decision were never traded.
+
+With one live session on disk this is the whole output:
+
+```text
+live sessions: 1 of 2 run(s) read, 1 comparable group(s)
+
+BTC-USDC 60s · neural · competition · rules capital 100, order_limit 10, daily_orders 24, paper_fee 0.006, interval_seconds 60, require_gate True, reinforcement pnl — 1 session
+
+  session               bars  span      ended   gordon   warren  buy & hold    delta  fills on/off  fees on/off
+  --------------------  ----  -----  --------  -------  -------  ----------  -------  ------------  -----------
+  20260911-180303-live  429   7h09m  salvaged  -1.969%  -1.120%     -0.628%  -0.849%  38/25         2.145/1.427
+
+  pooled: mean paired delta -0.849% ± 0.000%  ·  wins on/off/tie 0/1/0  ·  fees 2.145 on + 1.427 off = 3.572 total
+  one session: a single market path, not evidence.
+
+Memory-on wins N of M sessions is a count, not evidence. A handful of live sessions is a shape,
+not a result: each covers a few hours on a market path no other session shares, the pooled mean
+gives every session one vote regardless of how long it ran, and every session ends where the
+operator stopped it or the host died — a salvaged session's last bar is not a finish line. No run
+here demonstrates profitable learning.
+```
+
+(The reading note is one paragraph; it is wrapped here to fit the page. `2 run(s) read` is the
+one recorded season beside the live session.)
+
+The pooled mean gives every session one vote, not one vote per bar: a session left running for
+a week would otherwise outweigh a short one purely because it ran longer, and how long a
+session happened to run is not part of the experiment.
+
+**What the aggregate cannot support at this sample size.** With one session it is a table of
+one row and the pooled line is that row: the spread is 0 by construction, not because the
+result is consistent, and the report says so in as many words. Even with several sessions it
+would not become evidence of anything profitable. Live sessions run on different, disjoint
+market windows; none has a natural finish line, so what is being averaged is a set of stopping
+decisions as much as a strategy; and the sessions are not independent draws from any
+distribution this report knows. What it *can* support is comparison between the two arms
+within the accumulated set — the paired difference and its spread, the win count, and the fee
+bill the rule generated per session — which is the same claim `flyvsly report` makes over
+repeated seasons and no stronger.
+
 ## What this can and cannot support
 
 One session, 429 minutes, one market path, no repeat, no exam. It is a shape, not evidence —
