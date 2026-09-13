@@ -456,6 +456,13 @@ def load_resume(run_dir) -> ResumeState:
         )
 
     checkpoint = json.loads(checkpoint_path.read_text())
+    status = checkpoint.get("status")
+    if status != "running":
+        raise ValueError(
+            f"{name} says its own session is {status!r}, not running. Only a session a kill "
+            "interrupted can be continued; a continuation writes the session's own directory, "
+            "its log and its accounts, and this one is over."
+        )
     observations, dropped_tail = _read_observations(run_dir / "observations.jsonl")
     for index, observation in enumerate(observations):
         if int(observation.get("i", -1)) != index:

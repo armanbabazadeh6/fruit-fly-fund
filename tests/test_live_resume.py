@@ -202,6 +202,50 @@ def test_the_checkpoint_a_continuation_leaves_names_the_bar_it_continued_from(tm
     assert recording["summary"]["resumed"] == resumed
 
 
+def test_a_continuation_does_not_write_the_bar_the_old_log_ends_on_a_second_time(tmp_path):
+    """A continuation inherits the log and must add to it, not repeat its last line.
+
+    A resume opens by rewriting its checkpoint from state that already includes the bars it
+    adopted, and the log's line count, the checkpoint's bar count and the bars actually traded
+    are three readings of the same session. They are read here in the middle of one, which is
+    where a kill would leave them and where a duplicated line would look like a bar that was
+    traded twice.
+    """
+    clock, exchange = kill_a_session(tmp_path, "live-resumed-log")
+    run = tmp_path / "live-resumed-log"
+    resume = load_resume(run)
+    arena = resume_arena(tmp_path)
+    seen = {}
+
+    def stop():
+        if len(arena.observations) >= 5 and not seen:
+            state = json.loads((run / "live_state.json").read_text())
+            lines = log_of(run)
+            seen.update(
+                bars=state["bars_traded"],
+                status=state["status"],
+                lines=len(lines),
+                indexes=[o["i"] for o in lines],
+                times=[o["t"] for o in lines],
+            )
+            return True
+        return False
+
+    arena.run_live(
+        live_feed(clock, EPOCH - 3 * BAR, exchange=exchange),
+        run_id=resume.run_id,
+        out_root=tmp_path,
+        resume=resume,
+        stop=stop,
+    )
+
+    assert seen["status"] == "running"
+    assert seen["bars"] == seen["lines"] == 5
+    assert seen["indexes"] == [0, 1, 2, 3, 4]
+    times = seen["times"]
+    assert times == sorted(set(times)) == [EPOCH + i * BAR for i in range(5)]
+
+
 # -- 2. the accounts and the curves continue ---------------------------------------------
 
 
@@ -525,6 +569,21 @@ def test_a_session_that_is_not_there_is_not_resumed(tmp_path):
         load_resume(tmp_path / "nowhere")
 
 
+def test_a_session_that_says_it_stopped_is_not_resumed(tmp_path):
+    """The checkpoint is the session's own statement about itself, and it is read as one.
+
+    A run whose recording was deleted by hand is not a run a kill interrupted: its state file
+    still says it stopped, and a continuation would rewrite the bars of a session that is over.
+    """
+    run = write_killed(tmp_path, "live-said-stopped", [observation(0, 100.0)])
+    state = json.loads((run / "live_state.json").read_text())
+    state["status"] = "finished"
+    (run / "live_state.json").write_text(json.dumps(state))
+
+    with pytest.raises(ValueError, match="not running"):
+        load_resume(run)
+
+
 def test_a_session_killed_inside_a_bar_is_refused_rather_than_double_counted(tmp_path):
     """The one kill a continuation cannot honestly absorb.
 
@@ -572,7 +631,77 @@ def test_a_bar_the_log_was_still_writing_is_not_a_bar_that_was_traded(tmp_path):
     assert [o["i"] for o in recording["observations"]] == [0, 1, 2, 3]
 
 
-# -- 5. the window a continuation is rebuilt on ------------------------------------------
+# -- 5. the request path, from the API to the recording ----------------------------------
+
+
+def test_the_hub_continues_the_session_it_was_asked_to(tmp_path, monkeypatch):
+    """The API's resume request has to reach the arena, not merely be accepted.
+
+    The hub owns the run id and the arena owns the loop, so this is the join between them.
+    A hub that took the request and started a fresh session under the old id would look
+    identical until the recording was read — which is the whole failure this feature exists to
+    prevent, and the reason the wiring is asserted here rather than assumed.
+    """
+    import time
+
+    clock, exchange = kill_a_session(tmp_path, "live-hub-resume")
+    run = tmp_path / "live-hub-resume"
+    killed = log_of(run)
+
+    def feed_factory(spec, warmup_bars=120, poll_seconds=15.0, fetch=None, clock=None, venue="kraken"):
+        # The hub builds its own feed, so this is where the venue and the wall clock are
+        # injected: the factory keeps the hub's call shape and nothing else.
+        return CandleFeed(
+            spec,
+            warmup_bars=warmup_bars,
+            poll_seconds=0,
+            fetch=exchange,
+            clock=killed_clock,
+            venue=venue,
+        )
+
+    killed_clock = clock
+    monkeypatch.setattr("flyvsly.live.CandleFeed", feed_factory)
+
+    hub = RunHub(tmp_path, "data")
+    channel = hub.subscribe()
+    answer = hub.start_live({"resume": "live-hub-resume"})
+    assert answer["started"] is True
+
+    deadline = time.time() + 30
+    while len(hub.session.get("bars") or []) < 2 and time.time() < deadline:
+        time.sleep(0.02)
+    hub.stop_live()
+    deadline = time.time() + 30
+    while hub.thread.is_alive() and time.time() < deadline:
+        time.sleep(0.02)
+
+    recording = json.loads((run / "recording.json").read_text())
+    assert recording["run"]["id"] == "live-hub-resume"
+    assert recording["run"]["live"]["session_opened"] == EPOCH
+    assert recording["run"]["resumed"]["continued_from_bar"] == 3
+    assert recording["observations"][:3] == killed
+    times = [o["t"] for o in recording["observations"]]
+    assert times == sorted(set(times))
+    assert len(times) > 3
+    # The procedural engine keeps no learned state and the hub was told to checkpoint nothing,
+    # so nothing may be reported as having been restored.
+    assert {entry["mode"] for entry in recording["run"]["resumed"]["brains"].values()} == {
+        "baseline"
+    }
+
+    events = []
+    while not channel.empty():
+        events.append(channel.get_nowait())
+    starting = next(payload for kind, payload in events if kind == "run_starting")
+    assert starting["run_id"] == "live-hub-resume"
+    assert starting["resumed"]["from_bar"] == 3
+    assert starting["resumed"]["killed_status"] == "running"
+    assert hub.state["status"] == "finished"
+
+
+
+# -- 6. the window a continuation is rebuilt on ------------------------------------------
 
 
 def test_the_rebuilt_window_ends_at_the_bars_the_session_traded(tmp_path):
