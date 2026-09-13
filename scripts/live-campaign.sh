@@ -232,7 +232,7 @@ if [ "$INTERRUPTED" = 1 ]; then
   exit 130
 fi
 
-echo "campaign complete: $FINISHED session(s) traded $BARS bars each"
+echo "campaign complete: $FINISHED of $SESSIONS session(s) reached $BARS bars"
 "$PY" -m flyvsly live-report --runs "$RUNS" --table --write "$OUT"
 echo "pooled report: $OUT"
 echo "remember: $FINISHED session(s) through one market is a small sample; the report's own"
