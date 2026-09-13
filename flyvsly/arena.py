@@ -356,7 +356,7 @@ def _adopt(arm, observations) -> None:
     Needs no access to the ledgers — it is the log that says what those bars did to each
     account — and it is what keeps a continued run's recording one session rather than a tail:
     the curve starts where the session started, the fills and fees are the session's own, and
-    `available` bars are only ever added to these.
+    the bars traded after the resume are appended to theirs.
     """
     product = arm.rules.products[0]
     arm.curve = []

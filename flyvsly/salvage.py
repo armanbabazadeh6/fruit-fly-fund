@@ -342,7 +342,6 @@ class ResumeState:
     starting_conditions: dict | None
     label: str | None
     brains: dict
-    resumes: tuple
     dropped_tail: bool = False
 
     @property
@@ -435,11 +434,12 @@ def _checkpointed_brains(run_dir: Path, checkpoint: dict) -> dict:
 def load_resume(run_dir) -> ResumeState:
     """Read a killed live session as the continuation it can be.
 
-    Refuses a session that already has a recording, and refuses one whose ledgers hold an
-    order for a bar the log never recorded. The first is a closed experiment whose record is
-    evidence; the second was killed inside the order path, where continuing would trade or
-    account a bar twice — the only two ways this feature could quietly corrupt a run, so both
-    are refusals rather than something to work around.
+    Three refusals, all of them about not rewriting something that is over or not counting a
+    bar twice. A run with a `recording.json` is a closed experiment whose record is evidence.
+    A checkpoint that no longer says `running` is a session that stopped, whatever is next to
+    it on disk. A session whose ledgers hold an order for a bar the log never recorded was
+    killed inside the order path, and continuing it would either trade that bar again or
+    account for its fill twice. Everything else is read back and reported.
     """
     run_dir = Path(run_dir)
     name = run_dir.name
@@ -516,7 +516,6 @@ def load_resume(run_dir) -> ResumeState:
         starting_conditions=checkpoint.get("starting_conditions"),
         label=checkpoint.get("label"),
         brains=_checkpointed_brains(run_dir, checkpoint),
-        resumes=tuple(checkpoint.get("resumes") or ()),
         dropped_tail=dropped_tail,
     )
 

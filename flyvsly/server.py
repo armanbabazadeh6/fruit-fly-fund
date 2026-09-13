@@ -231,9 +231,9 @@ class RunHub:
     def _refuse_resume(self, run_id: str) -> str | None:
         """Why a live session cannot be continued, or None if it can.
 
-        Read from the artifacts rather than from memory, so the answer is the same for a
-        session this hub never ran: a run that already stops `stop_live()` would be resumable
-        from a checkpoint alone, and that is exactly the session a reader wants back.
+        Read from the artifacts rather than from memory, so the answer is the same for a session
+        this hub never ran — and a session killed before this process started is exactly the one
+        someone wants back.
         """
         if "/" in run_id or "\\" in run_id or run_id in ("", ".", ".."):
             return f"{run_id!r} is not a run id."
