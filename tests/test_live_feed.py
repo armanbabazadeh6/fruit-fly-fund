@@ -10,9 +10,16 @@ import json
 import pytest
 
 from flyvsly.config import MarketSpec
-from flyvsly.live import COMPLETION_GRACE_SECONDS, CandleFeed, LiveSeason, completed
+from flyvsly.live import (
+    COMPLETION_GRACE_SECONDS,
+    OVERDUE_RETRY_SECONDS,
+    STALE_WINDOW_BARS,
+    CandleFeed,
+    LiveSeason,
+    completed,
+)
 
-# 2026-09-11T14:00:00Z, an arbitrary but fixed instant.
+# 2026-09-11T14:40:00Z, an arbitrary but fixed instant.
 EPOCH = 1789137600
 SPEC = MarketSpec(kind="coinbase", product="BTC-USDC", bars=48, bar_seconds=60)
 
@@ -69,6 +76,27 @@ def test_forming_bucket_is_never_traded():
     assert completed(rows, 60, forming + 60 + COMPLETION_GRACE_SECONDS) == [
         (done, 100.0),
         (forming, 200.0),
+    ]
+
+
+def test_a_bucket_one_second_past_its_end_is_still_refused():
+    """One second past the boundary is inside the window: the venue may still be writing it.
+
+    The window has to be wider than a second, or a venue that takes a moment to put the last
+    tick of a bucket in place is handing over a close that is still moving.
+    """
+    opened = EPOCH
+    assert completed([row(opened, 100.0)], 60, opened + 60 + 1) == []
+
+
+def test_the_acceptance_boundary_is_the_end_of_the_grace_window():
+    """The gate is `bucket end + grace`, asserted on both sides of that tick, not implied."""
+    opened = EPOCH
+    end = opened + 60
+    just_inside = end + COMPLETION_GRACE_SECONDS - 0.5
+    assert completed([row(opened, 100.0)], 60, just_inside) == []
+    assert completed([row(opened, 100.0)], 60, end + COMPLETION_GRACE_SECONDS) == [
+        (opened, 100.0)
     ]
 
 
@@ -143,11 +171,120 @@ def test_feed_primes_on_warmup_then_hands_over_completed_bars():
     assert season.history(0)[-1] == season.mid(0)
 
 
+def test_the_feed_hands_the_bar_over_on_the_first_look_after_its_window():
+    """A closed bar waits for the grace and the fetch, not for the next poll interval."""
+    source = Source(page(4, EPOCH - 180))
+    clock = Clock(EPOCH + 15)
+    feed = CandleFeed(SPEC, warmup_bars=3, poll_seconds=15, fetch=source, clock=clock)
+    season = feed.prime()
+    assert season.bars == 0
+
+    end = EPOCH + 60
+    clock.now = end + COMPLETION_GRACE_SECONDS - 0.5
+    assert feed.poll() == 0
+    clock.now = end + COMPLETION_GRACE_SECONDS
+    assert feed.poll() == 1
+    assert season.timestamp(0) == EPOCH
+
+
+def test_the_wait_before_the_next_poll_leans_in_to_the_boundary():
+    """The feed answers how long the next look may wait, so it lands on the close itself."""
+    source = Source(page(4, EPOCH - 180))
+    clock = Clock(EPOCH + 15)
+    feed = CandleFeed(SPEC, warmup_bars=3, poll_seconds=15, fetch=source, clock=clock)
+    feed.prime()
+
+    # The bar that opens at EPOCH is trusted at EPOCH + 60 + grace: 48 s away, so the full
+    # interval still fits inside that and the ceiling is the answer.
+    due = EPOCH + 60 + COMPLETION_GRACE_SECONDS
+    assert feed.poll_seconds == 15
+    clock.now = due - 8  # 8 s left: wait exactly that, not a whole interval
+    assert feed.poll_seconds == pytest.approx(8)
+    clock.now = due + 0.5  # due and still not published: now the venue is late, not us
+    assert feed.poll_seconds == OVERDUE_RETRY_SECONDS
+
+
+def test_the_configured_interval_is_a_ceiling_not_a_fixed_cadence():
+    source = Source(page(4, EPOCH - 180))
+    clock = Clock(EPOCH + 55)  # 8 s short of the next bar being due
+    capped = CandleFeed(SPEC, warmup_bars=3, poll_seconds=3, fetch=source, clock=clock)
+    capped.prime()
+    assert capped.poll_seconds == 3
+
+    # A caller that asked for no idling gets none, whatever the clock says.
+    idle_free = CandleFeed(SPEC, warmup_bars=3, poll_seconds=0, fetch=source, clock=clock)
+    idle_free.prime()
+    assert idle_free.poll_seconds == 0
+
+    # Before there is a session there is no next bar to aim at, so the ceiling stands alone.
+    assert CandleFeed(SPEC, poll_seconds=15, fetch=source, clock=clock).poll_seconds == 15
+
+
+def test_a_minute_of_waiting_costs_the_grace_and_not_a_poll_interval():
+    """Walk the loop's own cadence past a boundary and measure what the fly waited for.
+
+    On the fixed 15 s grid this bar would have been handed over at EPOCH + 75 — the close at
+    EPOCH + 60, plus a full interval spent not looking. The wait is the whole of the delay
+    after the bucket's end, so it is the number this module hands the arena's budget.
+    """
+    source = Source(page(4, EPOCH - 180))
+    clock = Clock(EPOCH + 15)
+    feed = CandleFeed(SPEC, warmup_bars=3, poll_seconds=15, fetch=source, clock=clock)
+    feed.prime()
+
+    while clock.now < EPOCH + 300:
+        if feed.poll():
+            break
+        clock.now += feed.poll_seconds
+
+    assert feed.season.timestamp(0) == EPOCH
+    assert clock.now - (EPOCH + 60) == pytest.approx(COMPLETION_GRACE_SECONDS)
+
+
 def test_feed_refuses_to_start_without_enough_history():
     source = Source(page(2, EPOCH - 120))
     feed = CandleFeed(SPEC, warmup_bars=3, poll_seconds=0, fetch=source, clock=Clock(EPOCH + 600))
     with pytest.raises(RuntimeError, match="completed BTC-USDC bars"):
         feed.prime()
+
+
+def test_feed_refuses_to_start_on_a_venue_that_stopped_closing_bars():
+    """A silent venue is named and refused, not idled on until someone notices.
+
+    This is the shape of `--source coinbase`: that venue's rows for every pair upstream allows
+    end in 2022, so a session there primes on that history, records `session_opened` in 2022 and
+    then adds nothing, forever, without an error to show for it.
+    """
+    source = Source(page(4, EPOCH - 180))
+    clock = Clock(EPOCH + 4 * 365 * 86400)
+    feed = CandleFeed(SPEC, warmup_bars=3, poll_seconds=0, fetch=source, clock=clock)
+    with pytest.raises(RuntimeError) as caught:
+        feed.prime()
+    message = str(caught.value)
+    assert "kraken" in message  # the venue that went quiet
+    assert "BTC-USDC" in message  # and the product it stopped closing
+    assert "2026-09-11T14:40:00Z" in message  # the newest bar it did close
+    assert "not trading BTC-USDC" in message  # what the operator has to act on
+    assert feed.season is None  # a refused session has no season to trade
+
+
+def test_feed_primes_on_the_stalest_window_it_will_trade_and_no_more():
+    """The bound is `STALE_WINDOW_BARS` bars of silence, asserted on both sides of it."""
+    newest_ended = EPOCH + 60
+    limit = STALE_WINDOW_BARS * 60
+    at_the_limit = CandleFeed(
+        SPEC, warmup_bars=3, poll_seconds=0, fetch=Source(page(4, EPOCH - 180)),
+        clock=Clock(newest_ended + limit),
+    )
+    assert at_the_limit.prime().bars == 0
+    assert at_the_limit.season.timestamp(-1) == EPOCH
+
+    a_second_later = CandleFeed(
+        SPEC, warmup_bars=3, poll_seconds=0, fetch=Source(page(4, EPOCH - 180)),
+        clock=Clock(newest_ended + limit + 1),
+    )
+    with pytest.raises(RuntimeError, match="not trading BTC-USDC"):
+        a_second_later.prime()
 
 
 # -- the venue ---------------------------------------------------------------------------

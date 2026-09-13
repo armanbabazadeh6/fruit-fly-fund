@@ -79,6 +79,19 @@ def _arm_summary(arm_id: str, observations, initial: float, rules, season) -> di
     last = ((observations[-1].get("arms") or {}).get(arm_id) or {}) if observations else {}
     portfolio = last.get("portfolio") or {}
     signal = last.get("signal") or {}
+    # A blocked bar is a bar the guard refused before any observation was taken; `_finalise`
+    # reports `arm.stats["blocked"]`, so a reconstruction that hard-codes zero would misreport
+    # exactly the halted sessions salvage exists for — a loss-stop halt blocks every remaining bar.
+    blocked = sum(
+        1
+        for o in observations
+        if (((o.get("arms") or {}).get(arm_id) or {}).get("decision") or {}).get("side") == "BLOCKED"
+    )
+    memories = [
+        ((o.get("arms") or {}).get(arm_id) or {}).get("signal", {}).get("memory")
+        for o in observations
+        if ((o.get("arms") or {}).get(arm_id) or {}).get("signal", {}).get("memory")
+    ]
     exposure = sum(
         1
         for o in observations
@@ -92,7 +105,7 @@ def _arm_summary(arm_id: str, observations, initial: float, rules, season) -> di
         **summarise_curve(curve, initial),
         "fills": fills,
         "vetoes": int(portfolio.get("vetoes", 0) or 0),
-        "blocked_bars": 0,
+        "blocked_bars": blocked,
         "fees_paid": str(fees),
         "halted": portfolio.get("halted"),
         "exposure_bars": exposure,
@@ -105,7 +118,7 @@ def _arm_summary(arm_id: str, observations, initial: float, rules, season) -> di
             "daily_order_limit": rules.daily_orders,
             "cooldown_seconds": rules.interval_seconds,
         },
-        "final_memory": signal.get("memory"),
+        "final_memory": memories[-1] if memories else None,
     }
 
 

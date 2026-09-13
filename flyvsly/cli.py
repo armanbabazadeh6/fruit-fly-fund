@@ -842,7 +842,15 @@ def main(argv=None):
         default=120,
         help="completed bars the fly's first chart shows before the session starts trading",
     )
-    live.add_argument("--poll", type=float, default=15.0, help="seconds between candle polls")
+    live.add_argument(
+        "--poll",
+        type=float,
+        default=15.0,
+        help=(
+            "ceiling on how long to idle between candle polls; the feed leans in on the bar"
+            " boundary, so a closed bar is normally picked up a few seconds after it ends"
+        ),
+    )
     live.add_argument("--capital", default="100")
     live.add_argument("--order-limit", default="10")
     live.add_argument("--daily-orders", type=int, default=24)

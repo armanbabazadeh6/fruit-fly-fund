@@ -161,3 +161,30 @@ def test_salvage_refuses_a_session_that_never_traded(tmp_path):
     run = write_session(tmp_path, [])
     with pytest.raises(ValueError, match="traded no bars"):
         salvage_run(run)
+
+
+def test_salvage_counts_blocked_bars_and_keeps_the_last_memory(tmp_path):
+    """A halted session is the case salvage exists for, and it must not read as quiet.
+
+    Found by review: `blocked_bars` was hard-coded to 0 and `final_memory` came from the last
+    bar rather than the last bar that carried one — so a session halted by its loss stop, where
+    every remaining bar is blocked before any observation is taken, was reconstructed as a calm
+    run with no memory summary.
+    """
+    blocked = arm_record(100.0, 0, "0", side="BLOCKED")
+    blocked["execution"] = {
+        "status": "BLOCKED",
+        "reason": "Loss stop reached; holdings remain exposed",
+        "fill": None,
+    }
+    blocked["signal"] = {}  # a blocked bar never reaches an observation
+    observed = arm_record(99.99, 0, "0")
+    run = write_session(
+        tmp_path,
+        [observation(0, 77000.0, observed, observed), observation(1, 77010.0, blocked, blocked)],
+    )
+    summary = salvage_run(run)["summary"]
+    for arm in ("gordon", "warren"):
+        assert summary["arms"][arm]["blocked_bars"] == 1, arm
+        assert summary["arms"][arm]["final_memory"] is not None, arm
+        assert summary["arms"][arm]["final_memory"]["changed_edges"] == 7

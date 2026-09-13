@@ -11,6 +11,11 @@ read it would be reading the future of its own bar, so :func:`completed` refuses
 whose period has not ended (plus a small grace, because "has the exchange stopped editing this
 bucket" and "is the clock past it" are not the same instant).
 
+Holding a forming bar out costs the session a wait, and that wait comes out of the bar's own
+minute — so it is budgeted rather than tolerated. See the constants below for the arithmetic,
+and :attr:`CandleFeed.poll_seconds` for the half of it the feed controls: a poll that lands on
+the boundary instead of on a grid.
+
 Paper only, and no credentials of any kind: this reads the same public endpoint
 ``build_season`` already uses. Nothing here places an order or can place one.
 """
@@ -18,10 +23,50 @@ Paper only, and no credentials of any kind: this reads the same public endpoint
 import dataclasses
 import time
 
-from .market import Season, _candles, kraken_candles
+from .market import Season, _candles, _iso, kraken_candles
 
-# A bucket is only trusted once the clock is past its end plus this much slack.
-COMPLETION_GRACE_SECONDS = 10
+# What one bar costs, on the host these sessions run on. The bar interval is upstream's
+# (`interval_seconds: 60`); the observation is this host's measured 500 ms neural observation
+# (`flyvsly doctor --measure`), and the two arms decide concurrently, so a bar costs about one:
+#
+#     60 s  bar interval
+#    - 8 s  one observation
+#    ------
+#     52 s  left for picking the bar up, recording it and drawing breath
+#
+# Waiting for the exchange to hand over a bar it has already closed is therefore pure loss: it
+# comes straight off that 52 s. The wait is `COMPLETION_GRACE_SECONDS` plus however long the
+# caller idles before the next poll plus the fetch, and at a 10 s grace on a uniform 15 s poll
+# grid that came to 10-24 s depending on where the grid happened to fall (17 s on average) —
+# most of the 21.1 s `lag_seconds` recorded at the end of runs/20260911-180303-live.
+#
+# A bucket is only trusted once the clock is past its end plus this much slack. The slack pays
+# for the distance between our clock crossing the boundary and the exchange having finished
+# with the bucket: host-versus-venue clock skew plus the endpoint's own write latency for the
+# final tick. Read-only sampling of the live endpoint across minute boundaries times that
+# directly: over six boundaries the venue's next bucket came back 0.87-1.65 s after our clock
+# entered it, and the close of the bucket that just ended never moved once its successor was
+# there. So the venue's handover, clock skew included, is under two seconds; 3 s leaves a margin
+# on top of the worst observed minute while still spending a fraction of the budget on waiting.
+COMPLETION_GRACE_SECONDS = 3
+
+# How long to wait before looking again when a bar is already due but the endpoint has not
+# published it. That is the one moment the caller is waiting on the venue rather than on the
+# clock, and the venue's handover normally lands well inside the grace above, so a bar still
+# missing at the due instant means a slow minute rather than an impatient caller. A short retry
+# catches it; asking much faster is pointless, and Kraken answers a sub-second cadence with
+# `EGeneral:Too many requests`.
+OVERDUE_RETRY_SECONDS = 2.0
+
+# How stale the newest closed bar may be when a session starts, counted in bars. A venue that is
+# trading a product closes a bar every `bar_seconds`, so the newest completed one is normally
+# under one bar old (plus the grace above). Five bars is a few minutes of silence: long enough
+# that a slow minute or a paused market still starts, short enough that a venue which has really
+# stopped is refused while someone is still watching — and nothing like the venue that caused
+# this, where Coinbase Exchange's rows for every pair this project allows end 2022-07-13, so a
+# session started there primes on four-year-old history, records `session_opened` in 2022, and
+# then trades nothing, forever, with no error to show for it.
+STALE_WINDOW_BARS = 5
 
 # The public endpoint returns at most 300 buckets per request.
 PAGE_ROWS = 300
@@ -156,6 +201,13 @@ class CandleFeed:
     authoritative close per minute, the REST endpoint already carries it, and a poll has no
     connection state to get wrong. ``fetch``/``clock`` are injectable so the feed can be
     tested without a network or a wall clock.
+
+    ``poll_seconds`` is a ceiling on the wait between polls, not a fixed cadence. A caller
+    idles for whatever :attr:`poll_seconds` says, which is the interval while the next close is
+    further away than that and exactly the time left until the close once it is nearer. A fixed
+    grid would leave a bar that just closed sitting untraded for up to a whole interval, which
+    is most of what the session's wait used to be; leaning in means the next look lands on the
+    boundary instead of after it.
     """
 
     def __init__(
@@ -184,13 +236,57 @@ class CandleFeed:
         self.last_poll = 0.0
         self.polls = 0
 
+    @property
+    def poll_seconds(self) -> float:
+        """How long the caller should idle before polling again, given the clock now.
+
+        The feed knows exactly when the season's next bar will be tradable — its open is the
+        season's own clock, its end is a bar interval later, and the grace above is the rest —
+        so it never has to ask the endpoint whether the bar is ready yet. Until that instant is
+        nearer than the ceiling this is just the ceiling; in the last stretch it is the time
+        left, so the waiter wakes on the boundary rather than up to an interval after it. Once
+        the instant has passed and the bar still is not here, the endpoint is late rather than
+        the caller impatient, and the answer is the short retry.
+        """
+        ceiling = self._poll_seconds
+        if self.season is None:
+            return ceiling
+        due = self.season.next_bar_opened + int(self.spec.bar_seconds) + COMPLETION_GRACE_SECONDS
+        wait = due - self.clock()
+        return min(ceiling, wait if wait > 0 else OVERDUE_RETRY_SECONDS)
+
+    @poll_seconds.setter
+    def poll_seconds(self, seconds: float) -> None:
+        self._poll_seconds = float(seconds)
+
     def prime(self) -> LiveSeason:
-        """Start the session: the newest ``warmup_bars`` completed bars, nothing tradable yet."""
-        bars = completed(self.fetch(), self.spec.bar_seconds, self.clock())
+        """Start the session: the newest ``warmup_bars`` completed bars, nothing tradable yet.
+
+        Refuses a window whose bars have stopped closing instead of starting on one: a venue
+        that is silent and a market that is quiet look identical from here, and a session that
+        primes on old history and then trades nothing, forever, is the one outcome nobody can
+        audit. A short gap is still allowed — the session catches up on the bars that closed
+        while it was not looking, in market order, like any other backlog.
+        """
+        rows = self.fetch()
+        now = self.clock()
+        bars = completed(rows, self.spec.bar_seconds, now)
         if len(bars) < self.warmup_bars:
             raise RuntimeError(
                 f"the exchange returned {len(bars)} completed {self.spec.product} bars, "
                 f"but this session needs {self.warmup_bars} of warm-up"
+            )
+        newest, _ = bars[-1]
+        stale = now - (newest + self.spec.bar_seconds)
+        if stale > STALE_WINDOW_BARS * self.spec.bar_seconds:
+            # The message carries the whole diagnosis — the venue, the product, the newest bar
+            # it did close and how stale that is — because the operator's next step is there.
+            raise RuntimeError(
+                f"{self.venue} is not trading {self.spec.product}: the newest completed bar is "
+                f"{_iso(newest)} and it ended {stale:.0f} s ago, more than the "
+                f"{STALE_WINDOW_BARS} bars ({STALE_WINDOW_BARS * self.spec.bar_seconds} s) this "
+                f"session will accept. Check that {self.venue} still lists "
+                f"{self.spec.product}, or point the session at a venue that trades it."
             )
         window = bars[-self.warmup_bars :]
         self.season = LiveSeason(
