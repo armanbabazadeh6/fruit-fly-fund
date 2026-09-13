@@ -131,6 +131,63 @@ backlog of slow bars is traded in market order rather than dropped. It answers "
 hours at a one-minute cadence?" — yes, here, with the typical bar using about an eighth of its
 minute — not "how many arms or what window length will fit".
 
+## Running a session unattended
+
+The seven hours above ended because the host died, and nothing put the session back. That watch
+is now `scripts/live-supervisor.sh`, which runs `flyvsly live` under `flyvsly.supervise`:
+
+```sh
+scripts/live-supervisor.sh --engine neural --product BTC-USDC --poll 15
+```
+
+Every argument that is not one of the supervisor's own is passed to the session, so the flags
+are the session's flags; `--` passes everything after it through as well. The supervisor's own
+options all have a default, so the line above is a complete unattended run:
+
+| option | default | what it does |
+| --- | --- | --- |
+| `--runs DIR` | `runs` | where sessions, the log and the stop file go |
+| `--log FILE` | `<runs>/live-supervisor.jsonl` | the append-only record, one JSON object per decision |
+| `--stop-file FILE` | `<runs>/live.stop` | `touch` it to finish: the session stops after the bar it is on and the supervisor does not restart; delete it before the next run |
+| `--session-log FILE` | `<runs>/live-supervisor.session.log` | the session's own output, kept next to the record |
+| `--max-failures N` | 5 | consecutive crashes before the supervisor gives up |
+| `--backoff`, `--backoff-ceiling` | 5 s, 300 s | the retry wait, doubling from `--backoff` to the ceiling |
+| `--healthy-seconds` | 600 | a run this long clears the crash ladder |
+
+The policy is deliberately dull. Exit 0 or a stop file is an expected end: the supervisor stops
+with it, exit 0, and restarts nothing. Anything else is a crash: the session is restarted after
+5 s, 10 s, 20 s and so on up to 300 s, because the failures that happen are transient venue and
+host ones — a slow minute, a refused prime, a container the host killed. Five crashes in a row,
+none of them lasting `--healthy-seconds`, is a fault a retry will not fix, so the supervisor
+gives up, says so in the log, and exits 2; a run that lasted ten minutes clears the ladder, so a
+week of good trading followed by one bad night is not five failures. Ctrl-C is the operator,
+not a crash: the console delivers it to the session as well, so the session stops after the bar
+it is on, and an interrupt that reaches the supervisor rather than the session is recorded as
+`interrupted` and exits 130.
+
+What a restart is: a new process, and therefore a new session — `flyvsly live` mints a run id
+from the clock, so the restart opens a fresh run directory with its own $100 paper accounts and
+its own recording. Nothing from the session that died is lost (`flyvsly salvage` rebuilds its
+recording from the checkpoint it had already written), but the restart's equity curve does not
+continue the dead one's. Where each outcome is written down, one line each — the values below are
+the shape of a record, not a session that ran:
+
+```sh
+tail -f runs/live-supervisor.jsonl
+{"ts": "2026-09-12T01:14:03Z", "event": "start", "attempt": 1, "command": ["…", "live"]}
+{"ts": "2026-09-12T01:14:07Z", "event": "exit", "attempt": 1, "exit_code": 1, "runtime_seconds": 3.8, "expected": false, "reason": "crash"}
+{"ts": "2026-09-12T01:14:12Z", "event": "restart", "attempt": 2, "failures": 1, "backoff_seconds": 5.0, "last_exit_code": 1}
+```
+
+**What this has not been verified against.** No real session has run under the supervisor: it
+needs the live venue and the 1.6 GB graph, so the policy above is pinned by tests rather than by
+hours of market, and `pytest tests/test_supervise.py -q` is the check — a clean exit is not
+retried, a crash is retried with a growing wait, the ceiling and the give-up are enforced, and
+the script itself is driven end to end against a fake session that crashes once and then exits 0
+(the fake is what `FLYVSLY_SESSION` is for; it is also how the Docker form is run). The one
+thing the supervisor cannot do for you is notice that a *running* session has stopped trading
+without dying — for that, watch `runs/live-supervisor.session.log` and the browser.
+
 ## Where every number comes from
 
 All paths are inside `runs/20260911-180303-live/recording.json` unless the file is named.
